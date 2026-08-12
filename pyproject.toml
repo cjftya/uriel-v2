@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uriel-v2"
+version = "0.1.0"
+description = "Deterministic seed experiments for Korean Lotto 6/45"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "openpyxl>=3.1,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
+
+[project.scripts]
+uriel = "uriel_v2.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
