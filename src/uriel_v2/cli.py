@@ -17,6 +17,15 @@ from uriel_v2.logging_config import create_run_directory, setup_logging
 from uriel_v2.models import Draw, EvaluationRow, ReverseMatch
 from uriel_v2.reverse import reverse_search
 from uriel_v2.reverse_batch import run_reverse_batch
+from uriel_v2.seed_field import (
+    SeedFieldConfig,
+    evaluate_seed_field,
+    load_landscapes,
+    predict_seed_field,
+    write_evaluation_csv,
+    write_forecast_csv,
+    write_prediction_csv,
+)
 from uriel_v2.strategies import STRATEGIES, create_predictions
 
 
@@ -76,6 +85,29 @@ def build_parser() -> argparse.ArgumentParser:
     reverse_batch.add_argument("--chunk-size", type=int, default=25_000, help="워커 작업 청크 크기")
     reverse_batch.add_argument("--workers", default="auto", help="프로세스 워커 수 또는 auto")
     reverse_batch.add_argument("--bucket-size", type=int, default=100_000, help="seed landscape 버킷 크기")
+
+    seed_field = commands.add_parser("seed-field", help="정답 근접 seed landscape의 다음 회차 field를 walk-forward 평가")
+    _add_common_arguments(seed_field)
+    seed_field.add_argument(
+        "--landscape",
+        action="append",
+        required=True,
+        help="reverse-hit-seeds.csv 경로, 여러 파일은 옵션을 반복",
+    )
+    seed_field.add_argument("--start-round", type=int, required=True, help="평가 시작 회차")
+    seed_field.add_argument("--end-round", type=int, required=True, help="평가 종료 회차")
+    seed_field.add_argument("--cohort", required=True, help="결과에 기록할 cohort 이름")
+
+    seed_field_predict = commands.add_parser("seed-field-predict", help="seed field로 다음 회차 후보 seed 생성")
+    _add_common_arguments(seed_field_predict)
+    seed_field_predict.add_argument(
+        "--landscape",
+        action="append",
+        required=True,
+        help="reverse-hit-seeds.csv 경로, 여러 파일은 옵션을 반복",
+    )
+    seed_field_predict.add_argument("--round", type=int, required=True, help="예측 대상 회차")
+    seed_field_predict.add_argument("--top-k", type=int, default=100, help="모델별 저장할 후보 seed 수")
     return parser
 
 
@@ -273,6 +305,88 @@ def _run_reverse_batch(args: argparse.Namespace, run_dir: Path, logger: logging.
     )
 
 
+def _run_seed_field(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    draws = _load_and_log(args, logger)
+    config = SeedFieldConfig()
+    landscapes = load_landscapes(args.landscape)
+    logger.info(
+        "Seed Field Transport 시작 | cohort=%s | 평가=%s~%s | landscape=%s | config=%s",
+        args.cohort,
+        args.start_round,
+        args.end_round,
+        ",".join(args.landscape),
+        config.fingerprint,
+    )
+    def log_progress(completed: int, total: int, round_no: int) -> None:
+        if completed == 1 or completed == total or completed % 16 == 0:
+            logger.info(
+                "Seed Field 진행 | cohort=%s | 회차=%s | 진행=%s/%s (%.1f%%)",
+                args.cohort,
+                round_no,
+                completed,
+                total,
+                completed / total * 100.0,
+            )
+
+    rows, prediction_rows, summary = evaluate_seed_field(
+        draws=draws,
+        landscapes=landscapes,
+        start_round=args.start_round,
+        end_round=args.end_round,
+        cohort=args.cohort,
+        config=config,
+        progress=log_progress,
+    )
+    write_evaluation_csv(run_dir / "seed-field-evaluation.csv", rows)
+    write_prediction_csv(run_dir / "seed-field-top10-seeds.csv", prediction_rows)
+    _write_json(run_dir / "seed-field-summary.json", summary)
+    ensemble = summary["models"]["ensemble"]["budgets"]
+    for budget in config.budgets:
+        values = ensemble[str(budget)]
+        logger.info(
+            "Seed Field 요약 | cohort=%s | model=ensemble | budget=%s | 4+=%s (lift=%.3f p=%.4f) | 5+=%s (lift=%.3f p=%.4f) | 6=%s",
+            args.cohort,
+            budget,
+            values["selected_hit_4"] + values["selected_hit_5"] + values["selected_hit_6"],
+            values["lift_4_plus"],
+            values["p_4_plus"],
+            values["selected_hit_5"] + values["selected_hit_6"],
+            values["lift_5_plus"],
+            values["p_5_plus"],
+            values["selected_hit_6"],
+        )
+
+
+def _run_seed_field_predict(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    _load_and_log(args, logger)
+    config = SeedFieldConfig()
+    landscapes = load_landscapes(args.landscape)
+    logger.info(
+        "Seed Field 후보 생성 시작 | 대상=%s | top_k=%s | landscape=%s | config=%s",
+        args.round,
+        args.top_k,
+        ",".join(args.landscape),
+        config.fingerprint,
+    )
+    rows, metadata = predict_seed_field(
+        landscapes=landscapes,
+        target_round=args.round,
+        top_k=args.top_k,
+        config=config,
+    )
+    write_forecast_csv(run_dir / "seed-field-candidates.csv", rows)
+    _write_json(run_dir / "seed-field-candidates.json", metadata)
+    for row in rows:
+        if row.model == "ensemble" and row.rank <= 10:
+            logger.info(
+                "Seed Field 후보 | model=ensemble | rank=%s | seed=%s | score=%.6f | numbers=%s",
+                row.rank,
+                row.seed,
+                row.field_score,
+                ",".join(map(str, row.numbers)),
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -291,6 +405,10 @@ def main(argv: list[str] | None = None) -> int:
             _run_reverse(args, run_dir, logger)
         elif args.command == "reverse-batch":
             _run_reverse_batch(args, run_dir, logger)
+        elif args.command == "seed-field":
+            _run_seed_field(args, run_dir, logger)
+        elif args.command == "seed-field-predict":
+            _run_seed_field_predict(args, run_dir, logger)
         else:
             parser.error(f"지원하지 않는 명령: {args.command}")
     except KeyboardInterrupt:
