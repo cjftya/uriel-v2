@@ -16,6 +16,7 @@ from uriel_v2.evaluation import evaluate_walk_forward
 from uriel_v2.logging_config import create_run_directory, setup_logging
 from uriel_v2.models import Draw, EvaluationRow, ReverseMatch
 from uriel_v2.reverse import reverse_search
+from uriel_v2.reverse_batch import run_reverse_batch
 from uriel_v2.strategies import STRATEGIES, create_predictions
 
 
@@ -63,6 +64,18 @@ def build_parser() -> argparse.ArgumentParser:
     reverse.add_argument("--chunk-size", type=int, default=50_000, help="워커 작업 청크 크기")
     reverse.add_argument("--result-limit", type=int, default=100, help="저장할 상위 결과 수")
     reverse.add_argument("--workers", default="auto", help="프로세스 워커 수 또는 auto")
+
+    reverse_batch = commands.add_parser("reverse-batch", help="여러 회차의 정답 기반 역산 데이터셋 구축")
+    _add_common_arguments(reverse_batch)
+    reverse_batch.add_argument("--start-round", type=int, required=True, help="시작 회차 (포함)")
+    reverse_batch.add_argument("--end-round", type=int, required=True, help="종료 회차 (포함)")
+    reverse_batch.add_argument("--seed-start", type=int, default=0, help="시작 시드 (포함)")
+    reverse_batch.add_argument("--seed-end", type=int, default=1_000_000, help="종료 시드 (미포함)")
+    reverse_batch.add_argument("--top-k", type=int, default=100, help="회차별 저장할 상위 시드 수")
+    reverse_batch.add_argument("--min-hits", type=int, default=4, help="별도 저장할 최소 적중 수")
+    reverse_batch.add_argument("--chunk-size", type=int, default=25_000, help="워커 작업 청크 크기")
+    reverse_batch.add_argument("--workers", default="auto", help="프로세스 워커 수 또는 auto")
+    reverse_batch.add_argument("--bucket-size", type=int, default=100_000, help="seed landscape 버킷 크기")
     return parser
 
 
@@ -233,10 +246,38 @@ def _run_reverse(args: argparse.Namespace, run_dir: Path, logger: logging.Logger
     })
 
 
+def _run_reverse_batch(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    draws = _load_and_log(args, logger)
+    summary = run_reverse_batch(
+        draws,
+        start_round=args.start_round,
+        end_round=args.end_round,
+        seed_start=args.seed_start,
+        seed_end=args.seed_end,
+        top_k=args.top_k,
+        min_hits=args.min_hits,
+        chunk_size=args.chunk_size,
+        workers=args.workers,
+        bucket_size=args.bucket_size,
+        run_dir=run_dir,
+        logger=logger,
+    )
+    reconstruction = summary["reconstruction"]
+    logger.info(
+        "Stage A 요약 | 회차=%s | 4+=%s | 5+=%s | exact6=%s | 최고적중분포=%s",
+        summary["execution"]["completed_rounds"],
+        reconstruction["hit_4_plus_rounds"],
+        reconstruction["hit_5_plus_rounds"],
+        reconstruction["exact_6_rounds"],
+        reconstruction["best_hit_distribution"],
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    run_dir = create_run_directory(args.output, args.command)
+    output_base = Path(args.output) / "reverse-dataset" if args.command == "reverse-batch" else Path(args.output)
+    run_dir = create_run_directory(output_base, args.command)
     logger = setup_logging(run_dir, args.verbose)
     logger.info("Uriel v%s | command=%s | 결과=%s", __version__, args.command, run_dir.resolve())
     try:
@@ -248,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
             _run_evaluate(args, run_dir, logger)
         elif args.command == "reverse":
             _run_reverse(args, run_dir, logger)
+        elif args.command == "reverse-batch":
+            _run_reverse_batch(args, run_dir, logger)
         else:
             parser.error(f"지원하지 않는 명령: {args.command}")
     except KeyboardInterrupt:

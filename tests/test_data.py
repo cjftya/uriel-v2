@@ -12,6 +12,7 @@ class DataTests(unittest.TestCase):
         draws = load_draws(DATA)
 
         self.assertEqual(len(draws), 1235)
+        self.assertEqual([draw.round_no for draw in draws], list(range(1, 1236)))
         self.assertEqual(draws[0].round_no, 1)
         self.assertEqual(draws[-1].round_no, 1235)
         self.assertEqual(draws[-1].numbers, (6, 7, 11, 15, 39, 43))

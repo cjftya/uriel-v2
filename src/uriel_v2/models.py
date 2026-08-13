@@ -39,6 +39,9 @@ class ReverseMatch:
     numbers: tuple[int, ...]
     hits: int
     positional_mae: float
+    set_distance: int
+    signed_bias: float
+    deviations: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +51,7 @@ class SearchChunkTask:
     target: tuple[int, ...]
     min_hits: int
     result_limit: int
+    collect_all_matches: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,7 +8,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wai
 from collections.abc import Iterator
 
 from uriel_v2.evaluation import resolve_workers
-from uriel_v2.metrics import positional_mae
+from uriel_v2.metrics import positional_deviations
 from uriel_v2.models import ReverseMatch, ReverseSearchResult, SearchChunkResult, SearchChunkTask
 from uriel_v2.rng import generate_numbers, numbers_mask
 
@@ -23,10 +23,36 @@ def _add_ranked(heap: list[RankedItem], item: RankedItem, limit: int) -> None:
         heapq.heapreplace(heap, item)
 
 
-def _to_matches(heap: list[RankedItem]) -> tuple[ReverseMatch, ...]:
+def _to_matches(items: list[RankedItem], target: tuple[int, ...]) -> tuple[ReverseMatch, ...]:
     return tuple(
-        ReverseMatch(seed=-negative_seed, numbers=numbers, hits=hits, positional_mae=-negative_mae)
-        for hits, negative_mae, negative_seed, numbers in sorted(heap, reverse=True)
+        _make_match(
+            seed=-negative_seed,
+            numbers=numbers,
+            hits=hits,
+            positional_mae=-negative_mae,
+            target=target,
+        )
+        for hits, negative_mae, negative_seed, numbers in sorted(items, reverse=True)
+    )
+
+
+def _make_match(
+    *,
+    seed: int,
+    numbers: tuple[int, ...],
+    hits: int,
+    positional_mae: float,
+    target: tuple[int, ...],
+) -> ReverseMatch:
+    deviations = positional_deviations(numbers, target)
+    return ReverseMatch(
+        seed=seed,
+        numbers=numbers,
+        hits=hits,
+        positional_mae=positional_mae,
+        set_distance=12 - (2 * hits),
+        signed_bias=sum(deviations) / len(deviations),
+        deviations=deviations,
     )
 
 
@@ -35,25 +61,30 @@ def search_chunk(task: SearchChunkTask) -> SearchChunkResult:
     target_mask = numbers_mask(task.target)
     distribution = [0] * 7
     matches: list[RankedItem] = []
+    all_matches: list[RankedItem] = []
     best: list[RankedItem] = []
 
     for seed in range(task.start, task.end):
         numbers = generate_numbers(seed)
         hits = (numbers_mask(numbers) & target_mask).bit_count()
         distribution[hits] += 1
-        mae = positional_mae(numbers, task.target)
+        deviations = positional_deviations(numbers, task.target)
+        mae = sum(abs(value) for value in deviations) / len(deviations)
         ranked = (hits, -mae, -seed, numbers)
-        _add_ranked(best, ranked, 5)
+        _add_ranked(best, ranked, task.result_limit)
         if hits >= task.min_hits:
-            _add_ranked(matches, ranked, task.result_limit)
+            if task.collect_all_matches:
+                all_matches.append(ranked)
+            else:
+                _add_ranked(matches, ranked, task.result_limit)
 
     return SearchChunkResult(
         start=task.start,
         end=task.end,
         elapsed_seconds=time.perf_counter() - started,
         hit_distribution=tuple(distribution),
-        matches=_to_matches(matches),
-        best=_to_matches(best),
+        matches=_to_matches(all_matches if task.collect_all_matches else matches, task.target),
+        best=_to_matches(best, task.target),
     )
 
 
@@ -157,8 +188,8 @@ def reverse_search(
         end=end,
         elapsed_seconds=time.perf_counter() - started,
         hit_distribution=tuple(distribution),
-        matches=_to_matches(match_heap),
-        best=_to_matches(best_heap),
+        matches=_to_matches(match_heap, target),
+        best=_to_matches(best_heap, target),
         chunks=chunk_count,
         workers=worker_count,
     )

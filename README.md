@@ -2,13 +2,16 @@
 
 한국 로또 6/45 데이터를 이용해 **재현 가능한 시드 생성 방법**을 단순하게 비교하는 Python 실험 프로젝트입니다. UI 없이 CLI, 로그, CSV/JSON 결과에 집중합니다.
 
-현재 v0.1의 범위는 다음과 같습니다.
+현재 v0.2의 범위는 다음과 같습니다.
 
 - `lotto.xlsx` 구조 자동 인식 및 데이터 검증
 - Python 버전과 무관하게 같은 결과를 내는 SplitMix64 번호 생성기
 - 미래 당첨번호를 사용하지 않는 3가지 시드 전략
 - Process worker 기반 walk-forward 평가
 - 실제 정답 번호로 시드 범위를 탐색하는 역산 진단
+- 여러 회차를 같은 고정 seed budget으로 탐색하는 `reverse-batch`
+- 회차별 Top-K, 4+/5+/6 seed, seed bucket, reconstruction curve 저장
+- exact hypergeometric 및 고정 시드 Monte Carlo random baseline
 - 콘솔 로그와 실행별 `outputs/` 결과 보존
 
 > 역산 탐색은 이미 알려진 정답을 사용합니다. 시드 공간의 구조와 근접도를 살피는 진단 실험이지, 그 자체가 미래 회차 예측은 아닙니다.
@@ -79,6 +82,37 @@ python -m uriel_v2 reverse \
 ```
 
 탐색 구간은 `[seed-start, seed-end)`입니다. 작업은 청크 단위로 여러 프로세스에 분산되며, 진행률과 속도는 로그에 계속 표시됩니다. `Ctrl+C`로 중단해도 해당 실행의 로그는 남습니다.
+
+### 5. 여러 회차의 reverse reconstruction 데이터셋 구축
+
+Stage A의 고정 조건(1044~1235회, 회차별 `[0, 1,000,000)`)은 다음과 같이 실행합니다.
+
+```bash
+python -m uriel_v2 reverse-batch \
+  --start-round 1044 \
+  --end-round 1235 \
+  --seed-start 0 \
+  --seed-end 1000000 \
+  --top-k 100 \
+  --min-hits 4 \
+  --chunk-size 25000 \
+  --bucket-size 100000 \
+  --workers auto
+```
+
+모든 회차는 같은 seed 범위를 탐색합니다. 이 명령은 회차별로 진행률, 현재 최고 hit/seed, 5-hit·6-hit 수, 처리 속도와 ETA를 로그에 남깁니다. 결과는 `outputs/reverse-dataset/YYYYMMDD-HHMMSS-reverse-batch/`에 저장됩니다.
+
+| 파일 | 내용 |
+|---|---|
+| `reverse-rounds.csv` | 회차별 최고 결과, hit 분포, 실행 시간과 처리량 |
+| `reverse-top-k.csv` | 회차별 결정적 정렬 기준의 Top-K seed |
+| `reverse-hit-seeds.csv` | `min-hits` 이상인 모든 seed와 거리 지표 |
+| `reverse-seed-buckets.csv` | seed bucket별 4/5/6-hit 수와 최고 결과 |
+| `reverse-reconstruction-curve.csv` | 10K·100K·전체 budget의 회차별 최고 결과 |
+| `reverse-summary.json` | 전체 reconstruction, random baseline, landscape 요약 |
+| `curve-*.svg` | budget별 reconstruction curve 4종 |
+
+Top-K 정렬은 `hits 내림차순 → positional_mae 오름차순 → set_distance 오름차순 → seed 오름차순`으로 고정됩니다. 보너스 번호는 이 reverse reconstruction 점수에 사용하지 않습니다.
 
 ## 시드 전략
 
