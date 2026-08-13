@@ -12,6 +12,8 @@
 - 여러 회차를 같은 고정 seed budget으로 탐색하는 `reverse-batch`
 - 회차별 Top-K, 4+/5+/6 seed, seed bucket, reconstruction curve 저장
 - exact hypergeometric 및 고정 시드 Monte Carlo random baseline
+- 다중 좌표 seed landscape를 다음 회차로 운반하는 `seed-field` walk-forward 실험
+- 정답 없이 다음 회차 후보를 저장하는 `seed-field-predict`
 - 콘솔 로그와 실행별 `outputs/` 결과 보존
 
 > 역산 탐색은 이미 알려진 정답을 사용합니다. 시드 공간의 구조와 근접도를 살피는 진단 실험이지, 그 자체가 미래 회차 예측은 아닙니다.
@@ -113,6 +115,40 @@ python -m uriel_v2 reverse-batch \
 | `curve-*.svg` | budget별 reconstruction curve 4종 |
 
 Top-K 정렬은 `hits 내림차순 → positional_mae 오름차순 → set_distance 오름차순 → seed 오름차순`으로 고정됩니다. 보너스 번호는 이 reverse reconstruction 점수에 사용하지 않습니다.
+
+### 6. Seed Field Transport 검증
+
+`reverse-hit-seeds.csv`의 4+/5+/6-hit seed를 12개 좌표계로 투영하고, 직전 field의 지속·EWMA·유사 회차·원형 이동·XOR 이동과 균등 ensemble을 walk-forward로 평가합니다.
+
+```bash
+python -m uriel_v2 seed-field \
+  --landscape outputs/reverse-dataset/HISTORICAL/reverse-hit-seeds.csv \
+  --landscape outputs/reverse-dataset/DEVELOPMENT/reverse-hit-seeds.csv \
+  --start-round 1044 \
+  --end-round 1235 \
+  --cohort Development
+```
+
+평가 결과에는 모델·회차·예산별 집계와 실제 Top-10 seed가 함께 저장됩니다.
+
+| 파일 | 내용 |
+|---|---|
+| `seed-field-evaluation.csv` | 10·100·1K·10K budget의 exact 4/5/6-hit 수와 Top-10 적중 분포 |
+| `seed-field-top10-seeds.csv` | 모델별 실제 Top-10 seed, field 점수, 생성 번호와 적중 수 |
+| `seed-field-summary.json` | random null 대비 lift와 10,000회 Monte Carlo 단측 p-value |
+| `uriel.log` | 16회 간격 진행률과 최종 ensemble 요약 |
+
+다음 회차의 후보만 만들 때는 정답 데이터가 필요하지 않습니다.
+
+```bash
+python -m uriel_v2 seed-field-predict \
+  --landscape outputs/reverse-dataset/HISTORICAL/reverse-hit-seeds.csv \
+  --landscape outputs/reverse-dataset/DEVELOPMENT/reverse-hit-seeds.csv \
+  --round 1236 \
+  --top-k 100
+```
+
+`seed-field-candidates.csv`에는 모델별 순위, seed, field 점수와 생성 번호가 저장됩니다. 이 명령은 후보를 재현하기 위한 것으로, 로또 추첨의 예측 가능성을 전제하지 않습니다.
 
 ## 시드 전략
 
