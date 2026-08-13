@@ -9,6 +9,7 @@ description = "Deterministic seed experiments for Korean Lotto 6/45"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "numpy>=2,<3",
   "openpyxl>=3.1,<4",
 ]
 
