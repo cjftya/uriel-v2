@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from uriel_v2 import __version__
+from uriel_v2.combinadic_rank import run_combinadic_experiment
 from uriel_v2.data import find_draw, load_draws
 from uriel_v2.evaluation import evaluate_walk_forward
+from uriel_v2.experiment_compare import compare_experiments
 from uriel_v2.logging_config import create_run_directory, setup_logging
 from uriel_v2.models import Draw, EvaluationRow, ReverseMatch
 from uriel_v2.reverse import reverse_search
@@ -26,6 +28,7 @@ from uriel_v2.seed_field import (
     write_forecast_csv,
     write_prediction_csv,
 )
+from uriel_v2.seed_basin import run_seed_basin_experiment
 from uriel_v2.strategies import STRATEGIES, create_predictions
 
 
@@ -108,6 +111,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     seed_field_predict.add_argument("--round", type=int, required=True, help="예측 대상 회차")
     seed_field_predict.add_argument("--top-k", type=int, default=100, help="모델별 저장할 후보 seed 수")
+
+    combinadic = commands.add_parser("combinadic-rank", help="Combinadic rank dynamics walk-forward 실험")
+    _add_common_arguments(combinadic)
+    combinadic.set_defaults(output="artifacts")
+    combinadic.add_argument("--start-round", type=int, required=True, help="평가 시작 회차")
+    combinadic.add_argument("--end-round", type=int, required=True, help="평가 종료 회차")
+    combinadic.add_argument("--minimum-history", type=int, default=200, help="예측 전 필요한 최소 과거 회차")
+    combinadic.add_argument("--seed", type=int, default=20_260_814, help="실험 및 random baseline seed")
+    combinadic.add_argument("--split-round", type=int, default=None, help="Historical/Development 경계 회차")
+    combinadic.add_argument("--workers", default="auto", help="CLI 호환 옵션; rank 평가는 결정적 단일 프로세스")
+
+    seed_basin = commands.add_parser("seed-basin", help="Reverse Seed Basin/Attractor walk-forward 실험")
+    _add_common_arguments(seed_basin)
+    seed_basin.set_defaults(output="artifacts")
+    seed_basin.add_argument(
+        "--landscape", action="append", required=True,
+        help="reverse-hit-seeds.csv 경로; 여러 파일은 옵션을 반복",
+    )
+    seed_basin.add_argument("--start-round", type=int, required=True, help="평가 시작 회차")
+    seed_basin.add_argument("--end-round", type=int, required=True, help="평가 종료 회차")
+    seed_basin.add_argument("--minimum-history", type=int, default=32, help="예측 전 필요한 basin history")
+    seed_basin.add_argument("--seed", type=int, default=20_260_814, help="실험 및 random baseline seed")
+    seed_basin.add_argument("--split-round", type=int, default=None, help="Historical/Development 경계 회차")
+    seed_basin.add_argument("--workers", default="auto", help="Stage A reverse-batch와 CLI 호환을 위한 옵션")
+
+    compare = commands.add_parser("compare-experiments", help="Combinadic과 Seed Basin 결과 비교")
+    compare.add_argument("--combinadic-metrics", required=True, help="Combinadic metrics.json")
+    compare.add_argument("--seed-basin-metrics", required=True, help="Seed Basin metrics.json")
+    compare.add_argument("--output", default="artifacts", help="비교 결과 디렉터리")
+    compare.add_argument("--verbose", action="store_true", help="상세 로그 표시")
     return parser
 
 
@@ -387,10 +420,93 @@ def _run_seed_field_predict(args: argparse.Namespace, run_dir: Path, logger: log
             )
 
 
+def _run_combinadic_rank(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    draws = _load_and_log(args, logger)
+    logger.info(
+        "Combinadic Rank 시작 | 평가=%s~%s | minimum_history=%s | seed=%s | split=%s",
+        args.start_round, args.end_round, args.minimum_history, args.seed, args.split_round,
+    )
+    summary = run_combinadic_experiment(
+        draws=draws,
+        start_round=args.start_round,
+        end_round=args.end_round,
+        minimum_history=args.minimum_history,
+        experiment_seed=args.seed,
+        split_round=args.split_round,
+        run_dir=run_dir,
+        logger=logger,
+    )
+    for cohort, values in summary["cohorts"].items():
+        primary = values["budgets"]["1000"]
+        logger.info(
+            "Combinadic 요약 | cohort=%s | rank effect=%.1f p=%.4f | @1000 meanHit=%.4f random=%.4f | 5+=%s/%s",
+            cohort,
+            values["rank_distance"]["circular_effect"],
+            values["rank_distance"]["paired_permutation_p"],
+            primary["algorithm_mean_max_hit"],
+            primary["random_mean_max_hit"],
+            primary["algorithm_5_plus"],
+            primary["random_5_plus"],
+        )
+
+
+def _run_seed_basin(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    draws = _load_and_log(args, logger)
+    logger.info(
+        "Seed Basin 시작 | 평가=%s~%s | minimum_history=%s | seed=%s | landscape=%s",
+        args.start_round, args.end_round, args.minimum_history, args.seed, ",".join(args.landscape),
+    )
+    summary = run_seed_basin_experiment(
+        draws=draws,
+        landscape_paths=args.landscape,
+        start_round=args.start_round,
+        end_round=args.end_round,
+        minimum_history=args.minimum_history,
+        experiment_seed=args.seed,
+        split_round=args.split_round,
+        run_dir=run_dir,
+        logger=logger,
+    )
+    for cohort, values in summary["cohorts"].items():
+        primary = values["budgets"]["1000"]
+        distance = values["center_distance"]["5"]
+        logger.info(
+            "Seed Basin 요약 | cohort=%s | nearest5 effect=%s p=%s | @1000 meanHit=%.4f random=%.4f | 5+=%s/%s",
+            cohort,
+            distance.get("mean_effect", "n/a"),
+            distance.get("paired_permutation_p", "n/a"),
+            primary["algorithm_mean_max_hit"],
+            primary["random_mean_max_hit"],
+            primary["algorithm_5_plus"],
+            primary["random_5_plus"],
+        )
+
+
+def _run_compare(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    summary = compare_experiments(
+        combinadic_metrics=args.combinadic_metrics,
+        seed_basin_metrics=args.seed_basin_metrics,
+        output_dir=run_dir,
+    )
+    logger.info(
+        "최종 비교 | Combinadic=%s | Seed Basin=%s | 판정=%s",
+        summary["combinadic"], summary["seed_basin"], summary["decision"],
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    output_base = Path(args.output) / "reverse-dataset" if args.command == "reverse-batch" else Path(args.output)
+    if args.command == "reverse-batch":
+        output_base = Path(args.output) / "reverse-dataset"
+    elif args.command == "combinadic-rank":
+        output_base = Path(args.output) / "combinadic"
+    elif args.command == "seed-basin":
+        output_base = Path(args.output) / "seed_basin"
+    elif args.command == "compare-experiments":
+        output_base = Path(args.output) / "comparison"
+    else:
+        output_base = Path(args.output)
     run_dir = create_run_directory(output_base, args.command)
     logger = setup_logging(run_dir, args.verbose)
     logger.info("Uriel v%s | command=%s | 결과=%s", __version__, args.command, run_dir.resolve())
@@ -409,6 +525,12 @@ def main(argv: list[str] | None = None) -> int:
             _run_seed_field(args, run_dir, logger)
         elif args.command == "seed-field-predict":
             _run_seed_field_predict(args, run_dir, logger)
+        elif args.command == "combinadic-rank":
+            _run_combinadic_rank(args, run_dir, logger)
+        elif args.command == "seed-basin":
+            _run_seed_basin(args, run_dir, logger)
+        elif args.command == "compare-experiments":
+            _run_compare(args, run_dir, logger)
         else:
             parser.error(f"지원하지 않는 명령: {args.command}")
     except KeyboardInterrupt:

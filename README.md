@@ -2,7 +2,7 @@
 
 한국 로또 6/45 데이터를 이용해 **재현 가능한 시드 생성 방법**을 단순하게 비교하는 Python 실험 프로젝트입니다. UI 없이 CLI, 로그, CSV/JSON 결과에 집중합니다.
 
-현재 v0.2의 범위는 다음과 같습니다.
+현재 v0.3의 범위는 다음과 같습니다.
 
 - `lotto.xlsx` 구조 자동 인식 및 데이터 검증
 - Python 버전과 무관하게 같은 결과를 내는 SplitMix64 번호 생성기
@@ -14,6 +14,10 @@
 - exact hypergeometric 및 고정 시드 Monte Carlo random baseline
 - 다중 좌표 seed landscape를 다음 회차로 운반하는 `seed-field` walk-forward 실험
 - 정답 없이 다음 회차 후보를 저장하는 `seed-field-predict`
+- 8,145,060개 조합 공간의 Combinadic Rank Dynamics walk-forward 실험
+- reverse 4+/5+/6-hit landscape를 이용한 Seed Basin/Attractor 실험
+- 동일 candidate budget의 matched random 기준선, permutation test, bootstrap CI
+- CSV/JSON 결과와 PNG 진단 그래프
 - 콘솔 로그와 실행별 `outputs/` 결과 보존
 
 > 역산 탐색은 이미 알려진 정답을 사용합니다. 시드 공간의 구조와 근접도를 살피는 진단 실험이지, 그 자체가 미래 회차 예측은 아닙니다.
@@ -149,6 +153,50 @@ python -m uriel_v2 seed-field-predict \
 ```
 
 `seed-field-candidates.csv`에는 모델별 순위, seed, field 점수와 생성 번호가 저장됩니다. 이 명령은 후보를 재현하기 위한 것으로, 로또 추첨의 예측 가능성을 전제하지 않습니다.
+
+### 7. Combinadic Rank Dynamics
+
+당첨번호 조합을 `0..8,145,059`의 유일한 lexicographic rank로 바꾸고 delta continuation, 과거 delta pattern, modulo consensus, nearest state를 독립적으로 계산합니다. 각 target은 반드시 직전 회차까지만 사용합니다.
+
+```bash
+python -m uriel_v2 combinadic-rank \
+  --data lotto.xlsx \
+  --start-round 852 \
+  --end-round 1235 \
+  --minimum-history 200 \
+  --split-round 1044 \
+  --seed 20260814
+```
+
+결과는 `artifacts/combinadic/<run>/` 아래의 `ranks.csv`, `predictions.csv`, `walk_forward.csv`, `metrics.json`과 PNG 그래프로 저장됩니다. Top-10/100/1,000/10,000은 예측 rank 중심의 동일한 후보창을 사용하며 random도 같은 구조의 후보창으로 비교합니다.
+
+### 8. Reverse Seed Basin / Seed Attractor
+
+`reverse-batch`가 만든 `reverse-hit-seeds.csv`를 재사용해 회차별 weighted center, width, 4+/5+ density, entropy, asymmetry와 exact seed 주변의 추가 고적중 밀도를 계산합니다. 예측 target 회차의 landscape는 forecast가 끝난 뒤 거리와 번호 적중 채점에만 사용합니다.
+
+```bash
+python -m uriel_v2 seed-basin \
+  --data lotto.xlsx \
+  --landscape outputs/reverse-dataset/HISTORICAL/reverse-hit-seeds.csv \
+  --landscape outputs/reverse-dataset/DEVELOPMENT/reverse-hit-seeds.csv \
+  --start-round 852 \
+  --end-round 1235 \
+  --minimum-history 32 \
+  --split-round 1044 \
+  --seed 20260814
+```
+
+결과는 `artifacts/seed_basin/<run>/` 아래의 `exact_seeds.csv`, `basin_summary.csv`, `basin_predictions.csv`, `walk_forward.csv`, `metrics.json`과 PNG 그래프로 저장됩니다. Stage A의 대규모 탐색은 기존 process worker와 checkpoint를 그대로 사용하고, 이 단계는 저장된 landscape를 빠르게 재평가합니다.
+
+### 9. 두 실험 비교
+
+```bash
+python -m uriel_v2 compare-experiments \
+  --combinadic-metrics artifacts/combinadic/RUN/metrics.json \
+  --seed-basin-metrics artifacts/seed_basin/RUN/metrics.json
+```
+
+`artifacts/comparison/<run>/`에 candidate budget별 비교표와 `SUCCESS`, `WEAK SIGNAL`, `NO SIGNAL` 판정을 저장합니다. 두 알고리즘 중 하나라도 `SUCCESS`일 때만 Hybrid가 허용됩니다.
 
 ## 시드 전략
 
