@@ -15,8 +15,10 @@ from uriel_v2.combinadic_rank import run_combinadic_experiment
 from uriel_v2.data import find_draw, load_draws
 from uriel_v2.evaluation import evaluate_walk_forward
 from uriel_v2.experiment_compare import compare_experiments
+from uriel_v2.irregular_motif import run_irregular_motif_experiment
 from uriel_v2.logging_config import create_run_directory, setup_logging
 from uriel_v2.models import Draw, EvaluationRow, ReverseMatch
+from uriel_v2.motif_compare import compare_motif_experiments
 from uriel_v2.reverse import reverse_search
 from uriel_v2.reverse_batch import run_reverse_batch
 from uriel_v2.seed_field import (
@@ -29,6 +31,7 @@ from uriel_v2.seed_field import (
     write_prediction_csv,
 )
 from uriel_v2.seed_basin import run_seed_basin_experiment
+from uriel_v2.regime_motif import run_regime_motif_experiment
 from uriel_v2.strategies import STRATEGIES, create_predictions
 
 
@@ -141,6 +144,32 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--seed-basin-metrics", required=True, help="Seed Basin metrics.json")
     compare.add_argument("--output", default="artifacts", help="비교 결과 디렉터리")
     compare.add_argument("--verbose", action="store_true", help="상세 로그 표시")
+
+    irregular_motif = commands.add_parser("irregular-motif", help="Multi-scale Recurrence Motif walk-forward 실험")
+    _add_common_arguments(irregular_motif)
+    irregular_motif.set_defaults(output="artifacts")
+    irregular_motif.add_argument("--start-round", type=int, required=True, help="평가 시작 회차")
+    irregular_motif.add_argument("--end-round", type=int, required=True, help="평가 종료 회차")
+    irregular_motif.add_argument("--split-round", type=int, default=1044, help="Historical/Development 경계")
+    irregular_motif.add_argument("--workers", default="auto", help="설정 평가 프로세스 수 또는 auto")
+    irregular_motif.add_argument("--seed", type=int, default=20_260_814, help="실험·surrogate seed")
+    irregular_motif.add_argument("--resume-from", default=None, help="이전 checkpoint.jsonl 또는 실행 디렉터리")
+
+    regime_motif = commands.add_parser("regime-motif", help="Regime-Switching + Motif Transition 실험")
+    _add_common_arguments(regime_motif)
+    regime_motif.set_defaults(output="artifacts")
+    regime_motif.add_argument("--start-round", type=int, required=True, help="평가 시작 회차")
+    regime_motif.add_argument("--end-round", type=int, required=True, help="평가 종료 회차")
+    regime_motif.add_argument("--split-round", type=int, default=1044, help="Historical/Development 경계")
+    regime_motif.add_argument("--workers", default="auto", help="설정 평가 프로세스 수 또는 auto")
+    regime_motif.add_argument("--seed", type=int, default=20_260_814, help="실험·surrogate seed")
+    regime_motif.add_argument("--resume-from", default=None, help="이전 checkpoint.jsonl 또는 실행 디렉터리")
+
+    motif_compare = commands.add_parser("motif-compare", help="Motif와 Regime Transition 결과 비교")
+    motif_compare.add_argument("--motif-metrics", required=True, help="Motif metrics.json")
+    motif_compare.add_argument("--regime-metrics", required=True, help="Regime metrics.json")
+    motif_compare.add_argument("--output", default="artifacts", help="비교 결과 디렉터리")
+    motif_compare.add_argument("--verbose", action="store_true", help="상세 로그 표시")
     return parser
 
 
@@ -494,6 +523,53 @@ def _run_compare(args: argparse.Namespace, run_dir: Path, logger: logging.Logger
     )
 
 
+def _run_irregular_motif(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    draws = _load_and_log(args, logger)
+    summary = run_irregular_motif_experiment(
+        draws=draws,
+        start_round=args.start_round,
+        end_round=args.end_round,
+        split_round=args.split_round,
+        experiment_seed=args.seed,
+        workers=args.workers,
+        run_dir=run_dir,
+        logger=logger,
+        resume_from=args.resume_from,
+    )
+    logger.info("Multi-scale Motif 판정 | %s", summary["verdict"])
+
+
+def _run_regime_motif(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    draws = _load_and_log(args, logger)
+    summary = run_regime_motif_experiment(
+        draws=draws,
+        start_round=args.start_round,
+        end_round=args.end_round,
+        split_round=args.split_round,
+        experiment_seed=args.seed,
+        workers=args.workers,
+        run_dir=run_dir,
+        logger=logger,
+        resume_from=args.resume_from,
+    )
+    logger.info("Regime Transition 판정 | %s", summary["verdict"])
+
+
+def _run_motif_compare(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    summary = compare_motif_experiments(
+        motif_metrics=args.motif_metrics,
+        regime_metrics=args.regime_metrics,
+        output_dir=run_dir,
+    )
+    logger.info(
+        "Motif 최종 비교 | Motif=%s | Regime=%s | 결정=%s. %s",
+        summary["multi_scale_motif"],
+        summary["regime_transition"],
+        summary["decision"]["code"],
+        summary["decision"]["description"],
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -504,6 +580,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "seed-basin":
         output_base = Path(args.output) / "seed_basin"
     elif args.command == "compare-experiments":
+        output_base = Path(args.output) / "comparison"
+    elif args.command == "irregular-motif":
+        output_base = Path(args.output) / "motif"
+    elif args.command == "regime-motif":
+        output_base = Path(args.output) / "regime"
+    elif args.command == "motif-compare":
         output_base = Path(args.output) / "comparison"
     else:
         output_base = Path(args.output)
@@ -531,6 +613,12 @@ def main(argv: list[str] | None = None) -> int:
             _run_seed_basin(args, run_dir, logger)
         elif args.command == "compare-experiments":
             _run_compare(args, run_dir, logger)
+        elif args.command == "irregular-motif":
+            _run_irregular_motif(args, run_dir, logger)
+        elif args.command == "regime-motif":
+            _run_regime_motif(args, run_dir, logger)
+        elif args.command == "motif-compare":
+            _run_motif_compare(args, run_dir, logger)
         else:
             parser.error(f"지원하지 않는 명령: {args.command}")
     except KeyboardInterrupt:

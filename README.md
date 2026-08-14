@@ -2,7 +2,7 @@
 
 한국 로또 6/45 데이터를 이용해 **재현 가능한 시드 생성 방법**을 단순하게 비교하는 Python 실험 프로젝트입니다. UI 없이 CLI, 로그, CSV/JSON 결과에 집중합니다.
 
-현재 v0.3의 범위는 다음과 같습니다.
+현재 v0.4의 범위는 다음과 같습니다.
 
 - `lotto.xlsx` 구조 자동 인식 및 데이터 검증
 - Python 버전과 무관하게 같은 결과를 내는 SplitMix64 번호 생성기
@@ -18,6 +18,9 @@
 - reverse 4+/5+/6-hit landscape를 이용한 Seed Basin/Attractor 실험
 - 동일 candidate budget의 matched random 기준선, permutation test, bootstrap CI
 - CSV/JSON 결과와 PNG 진단 그래프
+- 6개 multi-view state와 exact/Derivative DTW 기반의 불규칙 recurrence motif 탐색
+- KMeans·GMM·HDBSCAN regime과 variable-length transition motif 검증
+- Historical 설정 고정, Development 무재튜닝, 4개 surrogate와 10,000회 random candidate baseline
 - 콘솔 로그와 실행별 `outputs/` 결과 보존
 
 > 역산 탐색은 이미 알려진 정답을 사용합니다. 시드 공간의 구조와 근접도를 살피는 진단 실험이지, 그 자체가 미래 회차 예측은 아닙니다.
@@ -197,6 +200,57 @@ python -m uriel_v2 compare-experiments \
 ```
 
 `artifacts/comparison/<run>/`에 candidate budget별 비교표와 `SUCCESS`, `WEAK SIGNAL`, `NO SIGNAL` 판정을 저장합니다. 두 알고리즘 중 하나라도 `SUCCESS`일 때만 Hybrid가 허용됩니다.
+
+### 10. Irregular Recurrence Motif
+
+각 회차를 raw number, 7×7 grid, circle, distribution, inter-round transition, local context의 6개 view로 분리하고, 길이가 다른 trajectory를 exact DTW와 Derivative-DTW로 비교합니다. 세 가지 사전등록 설정은 Historical에서만 비교하며 선택된 설정과 confidence 임계값을 Development에 그대로 적용합니다.
+
+```bash
+python -m uriel_v2 irregular-motif \
+  --data lotto.xlsx \
+  --start-round 852 \
+  --end-round 1235 \
+  --split-round 1044 \
+  --workers 8 \
+  --seed 20260814 \
+  --output artifacts
+```
+
+중단된 선택 완료 이후 walk-forward는 이전 실행의 `checkpoint.jsonl` 또는 실행 디렉터리를 지정해 이어갈 수 있습니다.
+
+```bash
+python -m uriel_v2 irregular-motif ... --resume-from artifacts/motif/PREVIOUS_RUN
+```
+
+결과는 `artifacts/motif/<run>/`에 Parquet feature cache, recurrence candidates, 회차별 candidate ranking, opportunity subset, metrics와 recurrence/entropy/calibration 그래프로 저장됩니다.
+
+### 11. Regime-Switching + Motif Transition
+
+KMeans/GMM의 `K=4,6,8,12,16`과 HDBSCAN 두 설정을 Historical calibration에서 비교합니다. 고정된 설정으로 Regime-only와 variable-length transition motif를 각각 walk-forward 평가하며, 한 회차의 soft membership도 보존합니다.
+
+```bash
+python -m uriel_v2 regime-motif \
+  --data lotto.xlsx \
+  --start-round 852 \
+  --end-round 1235 \
+  --split-round 1044 \
+  --workers 8 \
+  --seed 20260814 \
+  --output artifacts
+```
+
+Regime 실행도 회차별 prediction·match payload를 flush하므로 `--resume-from artifacts/regime/PREVIOUS_RUN`으로 이어갈 수 있습니다.
+
+최종 비교는 두 실행의 `metrics.json`을 사용합니다.
+
+```bash
+python -m uriel_v2 motif-compare \
+  --motif-metrics artifacts/motif/RUN/metrics.json \
+  --regime-metrics artifacts/regime/RUN/metrics.json \
+  --output artifacts
+```
+
+Hybrid(`C`)는 두 엔진이 모두 `SUCCESS`일 때만 허용됩니다. `WEAK SIGNAL`은 Locked/Blind 개방 조건이 아닙니다.
 
 ## 시드 전략
 
