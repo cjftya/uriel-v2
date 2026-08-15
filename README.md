@@ -252,6 +252,23 @@ python -m uriel_v2 motif-compare \
 
 Hybrid(`C`)는 두 엔진이 모두 `SUCCESS`일 때만 허용됩니다. `WEAK SIGNAL`은 Locked/Blind 개방 조건이 아닙니다.
 
+### 12. Opportunity Mechanism Analysis
+
+동결된 `multiview_long` 실행을 다시 튜닝하지 않고, opportunity와 non-opportunity, 성공(4+)과 실패(<4)의 retrieval·cross-view·follow-up consensus·candidate 구조를 비교합니다. 최대 5개 Stage 2 규칙은 Historical에서만 정의·선택하고 Development에 그대로 적용합니다.
+
+```bash
+python -m uriel_v2 opportunity-analysis \
+  --data lotto.xlsx \
+  --motif-run artifacts/motif/RUN \
+  --start-round 852 \
+  --end-round 1235 \
+  --split-round 1044 \
+  --seed 20260814 \
+  --output artifacts
+```
+
+결과는 `artifacts/opportunity_analysis/<run>/`에 opportunity feature/label, 성공·실패 통계, view ablation·single-view·pair diagnostic, motif family, second-order motif, Stage 2 rule, candidate funnel, missing winner, false positive, metrics와 PNG 그래프로 저장됩니다. View 진단은 target label을 사용하지 않고 기존 Top-40 match pool의 support vector만 재가중하며, Locked 660–851과 Additional Blind 468–659는 평가 target으로 열지 않습니다.
+
 ## 시드 전략
 
 | 전략 | 입력 | 목적 |

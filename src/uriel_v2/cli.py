@@ -19,6 +19,7 @@ from uriel_v2.irregular_motif import run_irregular_motif_experiment
 from uriel_v2.logging_config import create_run_directory, setup_logging
 from uriel_v2.models import Draw, EvaluationRow, ReverseMatch
 from uriel_v2.motif_compare import compare_motif_experiments
+from uriel_v2.opportunity_analysis import run_opportunity_analysis
 from uriel_v2.reverse import reverse_search
 from uriel_v2.reverse_batch import run_reverse_batch
 from uriel_v2.seed_field import (
@@ -170,6 +171,16 @@ def build_parser() -> argparse.ArgumentParser:
     motif_compare.add_argument("--regime-metrics", required=True, help="Regime metrics.json")
     motif_compare.add_argument("--output", default="artifacts", help="비교 결과 디렉터리")
     motif_compare.add_argument("--verbose", action="store_true", help="상세 로그 표시")
+
+    opportunity = commands.add_parser("opportunity-analysis", help="동결된 Multi-scale Motif opportunity mechanism 분석")
+    _add_common_arguments(opportunity)
+    opportunity.set_defaults(output="artifacts")
+    opportunity.add_argument("--motif-run", required=True, help="동결된 irregular-motif 실행 디렉터리")
+    opportunity.add_argument("--start-round", type=int, default=852, help="평가 시작 회차 (동결: 852)")
+    opportunity.add_argument("--end-round", type=int, default=1235, help="평가 종료 회차 (동결: 1235)")
+    opportunity.add_argument("--split-round", type=int, default=1044, help="Historical/Development 경계 (동결: 1044)")
+    opportunity.add_argument("--seed", type=int, default=20_260_814, help="bootstrap/permutation/random baseline seed")
+    opportunity.add_argument("--workers", default="auto", help="CLI 호환 옵션; 분석은 결정적 단일 프로세스")
     return parser
 
 
@@ -570,6 +581,25 @@ def _run_motif_compare(args: argparse.Namespace, run_dir: Path, logger: logging.
     )
 
 
+def _run_opportunity_analysis(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    draws = _load_and_log(args, logger)
+    summary = run_opportunity_analysis(
+        draws=draws,
+        motif_run=args.motif_run,
+        start_round=args.start_round,
+        end_round=args.end_round,
+        split_round=args.split_round,
+        experiment_seed=args.seed,
+        workers=args.workers,
+        run_dir=run_dir,
+        logger=logger,
+    )
+    logger.info(
+        "Opportunity Mechanism 판정 | %s | 선택=%s. %s",
+        summary["verdict"], summary["decision"]["code"], summary["decision"]["description"],
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -587,6 +617,8 @@ def main(argv: list[str] | None = None) -> int:
         output_base = Path(args.output) / "regime"
     elif args.command == "motif-compare":
         output_base = Path(args.output) / "comparison"
+    elif args.command == "opportunity-analysis":
+        output_base = Path(args.output) / "opportunity_analysis"
     else:
         output_base = Path(args.output)
     run_dir = create_run_directory(output_base, args.command)
@@ -619,6 +651,8 @@ def main(argv: list[str] | None = None) -> int:
             _run_regime_motif(args, run_dir, logger)
         elif args.command == "motif-compare":
             _run_motif_compare(args, run_dir, logger)
+        elif args.command == "opportunity-analysis":
+            _run_opportunity_analysis(args, run_dir, logger)
         else:
             parser.error(f"지원하지 않는 명령: {args.command}")
     except KeyboardInterrupt:
