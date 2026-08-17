@@ -34,6 +34,7 @@ from uriel_v2.seed_field import (
 from uriel_v2.seed_basin import run_seed_basin_experiment
 from uriel_v2.regime_motif import run_regime_motif_experiment
 from uriel_v2.strategies import STRATEGIES, create_predictions
+from uriel_v2.top30_broad_retrieval import run_top30_broad_retrieval
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -181,6 +182,32 @@ def build_parser() -> argparse.ArgumentParser:
     opportunity.add_argument("--split-round", type=int, default=1044, help="Historical/Development 경계 (동결: 1044)")
     opportunity.add_argument("--seed", type=int, default=20_260_814, help="bootstrap/permutation/random baseline seed")
     opportunity.add_argument("--workers", default="auto", help="CLI 호환 옵션; 분석은 결정적 단일 프로세스")
+
+    top30 = commands.add_parser(
+        "top30-broad-retrieval",
+        help="동결된 Motif Top30 broad-area retrieval 독립 검증",
+    )
+    _add_common_arguments(top30)
+    top30.set_defaults(output="artifacts")
+    top30.add_argument("--source-motif-run", required=True, help="동결된 irregular-motif 실행 디렉터리")
+    top30.add_argument("--source-opportunity-run", required=True, help="동결된 opportunity-analysis 실행 디렉터리")
+    top30.add_argument("--seen-start", type=int, default=852, help="Seen 시작 회차 (동결: 852)")
+    top30.add_argument("--seen-end", type=int, default=1235, help="Seen 종료 회차 (동결: 1235)")
+    top30.add_argument("--locked-start", type=int, default=660, help="Locked 시작 회차 (동결: 660)")
+    top30.add_argument("--locked-end", type=int, default=851, help="Locked 종료 회차 (동결: 851)")
+    top30.add_argument("--blind-start", type=int, default=468, help="Blind 시작 회차 (동결: 468)")
+    top30.add_argument("--blind-end", type=int, default=659, help="Blind 종료 회차 (동결: 659)")
+    top30.add_argument(
+        "--confidence-threshold",
+        type=float,
+        default=0.011722291804,
+        help="Stage 1 confidence threshold (동결)",
+    )
+    top30.add_argument("--candidate-size", type=int, default=30, help="candidate size (동결: 30)")
+    top30.add_argument("--seed", type=int, default=20_260_818, help="paired random seed (동결)")
+    top30.add_argument("--iterations", type=int, default=100_000, help="paired random iterations (동결)")
+    top30.add_argument("--workers", default="auto", help="target 평가 프로세스 수 또는 auto")
+    top30.add_argument("--resume-from", default=None, help="이전 checkpoint.jsonl 또는 실행 디렉터리")
     return parser
 
 
@@ -600,6 +627,35 @@ def _run_opportunity_analysis(args: argparse.Namespace, run_dir: Path, logger: l
     )
 
 
+def _run_top30_broad_retrieval(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> None:
+    draws = _load_and_log(args, logger)
+    summary = run_top30_broad_retrieval(
+        draws=draws,
+        data_path=args.data,
+        source_motif_run=args.source_motif_run,
+        source_opportunity_run=args.source_opportunity_run,
+        seen_start=args.seen_start,
+        seen_end=args.seen_end,
+        locked_start=args.locked_start,
+        locked_end=args.locked_end,
+        blind_start=args.blind_start,
+        blind_end=args.blind_end,
+        confidence_threshold=args.confidence_threshold,
+        candidate_size=args.candidate_size,
+        experiment_seed=args.seed,
+        iterations=args.iterations,
+        workers=args.workers,
+        run_dir=run_dir,
+        logger=logger,
+        resume_from=args.resume_from,
+    )
+    logger.info(
+        "Top30 Broad-Area Retrieval 판정 | %s. %s",
+        summary["final_decision"]["code"],
+        summary["final_decision"]["verdict"],
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -619,6 +675,8 @@ def main(argv: list[str] | None = None) -> int:
         output_base = Path(args.output) / "comparison"
     elif args.command == "opportunity-analysis":
         output_base = Path(args.output) / "opportunity_analysis"
+    elif args.command == "top30-broad-retrieval":
+        output_base = Path(args.output) / "top30_broad_retrieval"
     else:
         output_base = Path(args.output)
     run_dir = create_run_directory(output_base, args.command)
@@ -653,6 +711,8 @@ def main(argv: list[str] | None = None) -> int:
             _run_motif_compare(args, run_dir, logger)
         elif args.command == "opportunity-analysis":
             _run_opportunity_analysis(args, run_dir, logger)
+        elif args.command == "top30-broad-retrieval":
+            _run_top30_broad_retrieval(args, run_dir, logger)
         else:
             parser.error(f"지원하지 않는 명령: {args.command}")
     except KeyboardInterrupt:

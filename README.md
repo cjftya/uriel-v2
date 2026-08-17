@@ -269,6 +269,28 @@ python -m uriel_v2 opportunity-analysis \
 
 결과는 `artifacts/opportunity_analysis/<run>/`에 opportunity feature/label, 성공·실패 통계, view ablation·single-view·pair diagnostic, motif family, second-order motif, Stage 2 rule, candidate funnel, missing winner, false positive, metrics와 PNG 그래프로 저장됩니다. View 진단은 target label을 사용하지 않고 기존 Top-40 match pool의 support vector만 재가중하며, Locked 660–851과 Additional Blind 468–659는 평가 target으로 열지 않습니다.
 
+### 13. Top30 Broad-Area Retrieval
+
+동결된 `multiview_long`과 Stage 1 confidence threshold를 그대로 사용해 Top30 broad-area retrieval을 별도 사전등록 실험으로 검증합니다. Seen 852–1235 재현이 완료돼야 `preregistration.json`을 기록하고 Locked 660–851을 한 번 평가합니다. Additional Blind 468–659는 Locked가 엄격한 SUCCESS 조건을 모두 통과할 때에만 CLI가 자동으로 엽니다.
+
+```bash
+python -m uriel_v2 top30-broad-retrieval \
+  --data lotto.xlsx \
+  --source-motif-run artifacts/motif/20260814-174919-irregular-motif \
+  --source-opportunity-run artifacts/opportunity_analysis/20260815-124819-opportunity-analysis \
+  --seen-start 852 --seen-end 1235 \
+  --locked-start 660 --locked-end 851 \
+  --blind-start 468 --blind-end 659 \
+  --confidence-threshold 0.011722291804 \
+  --candidate-size 30 \
+  --seed 20260818 \
+  --iterations 100000 \
+  --workers 4 \
+  --output artifacts
+```
+
+결과는 `artifacts/top30_broad_retrieval/<run>/`에 preregistration과 source validation, target별 Top30 prediction, block/cohort 통계, candidate funnel, surrogate, checkpoint, access log, metrics와 10개 PNG로 저장됩니다. `--force-blind` 같은 우회 옵션은 제공하지 않습니다.
+
 ## 시드 전략
 
 | 전략 | 입력 | 목적 |
