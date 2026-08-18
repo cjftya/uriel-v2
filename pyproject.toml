@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uriel-v2"
-version = "0.6.0"
-description = "Deterministic seed experiments for Korean Lotto 6/45"
+version = "0.7.0"
+description = "Reproducible stochastic algorithm and Korean Lotto 6/45 experiments"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -23,6 +23,7 @@ dev = ["pytest>=8,<9"]
 
 [project.scripts]
 uriel = "uriel_v2.cli:main"
+uriel-probabilistic = "uriel_v2.probabilistic_lab.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

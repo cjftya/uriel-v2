@@ -1,8 +1,8 @@
 # Uriel v2
 
-한국 로또 6/45 데이터를 이용해 **재현 가능한 시드 생성 방법**을 단순하게 비교하는 Python 실험 프로젝트입니다. UI 없이 CLI, 로그, CSV/JSON 결과에 집중합니다.
+재현 가능한 한국 로또 6/45 시드 실험과 범용 확률 알고리즘 성능 예측 연구를 함께 관리하는 Python 프로젝트입니다. 두 연구 영역은 패키지와 출력 경로를 분리하며, UI 없이 CLI, 로그, Parquet/CSV/JSON 결과에 집중합니다.
 
-현재 v0.4의 범위는 다음과 같습니다.
+현재 v0.7의 범위는 다음과 같습니다.
 
 - `lotto.xlsx` 구조 자동 인식 및 데이터 검증
 - Python 버전과 무관하게 같은 결과를 내는 SplitMix64 번호 생성기
@@ -22,8 +22,43 @@
 - KMeans·GMM·HDBSCAN regime과 variable-length transition motif 검증
 - Historical 설정 고정, Development 무재튜닝, 4개 surrogate와 10,000회 random candidate baseline
 - 콘솔 로그와 실행별 `outputs/` 결과 보존
+- 로또 코드와 분리된 범용 확률 알고리즘 실험 패키지
+- 공통 Problem/Algorithm/Budget/Run/Trace schema와 확장 JSON field
+- PCG64 seed 격리, process worker, checkpoint/resume, Parquet dataset
+- IID Monte Carlo와 Random Search 기반 Phase 1 smoke pilot
+- 5%/10%/20% early-trajectory feature와 자동 데이터 품질 검사
 
 > 역산 탐색은 이미 알려진 정답을 사용합니다. 시드 공간의 구조와 근접도를 살피는 진단 실험이지, 그 자체가 미래 회차 예측은 아닙니다.
+
+## 범용 확률 알고리즘 연구
+
+`uriel_v2.probabilistic_lab`은 기존 로또 실험과 코드·CLI·출력 경로를 분리한 범용 실험 기반입니다. 문제 구조, 랜덤 메커니즘, 예산, 초기 trajectory로 최종 quality/runtime/failure 분포를 예측하는 장기 연구의 Phase 1을 담당합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab pilot \
+  --instances-per-family 4 \
+  --seeds 3 \
+  --workers auto
+```
+
+현재 smoke pilot은 Gaussian/Student-t/Mixture mean estimation과 Sphere/Rastrigin/Rosenbrock optimization을 생성하고, 각 domain에 IID Monte Carlo 또는 Random Search를 적용합니다. 생성되는 주요 파일은 다음과 같습니다.
+
+| 파일 | 내용 |
+|---|---|
+| `data/problems/problem_metadata.parquet` | 고정 공통 problem schema |
+| `data/runs/runs.parquet` | quality, runtime, failure, first-passage 결과 |
+| `data/traces/common/trace_common.parquet` | 1/2/5/10/20/50/100% 공통 trace |
+| `data/features/trajectory_features.parquet` | 5/10/20% early-trajectory feature |
+| `checkpoint.jsonl` | run 단위 중간 복구 기록 |
+| `validation.json` | duplicate, missing trace, NaN/Inf 등 품질 검사 |
+| `summary.json` | 알고리즘·problem family별 smoke 결과 |
+
+생성한 데이터셋은 다시 검사할 수 있습니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab validate \
+  artifacts/probabilistic/RUN_DIRECTORY
+```
 
 ## 설치
 
