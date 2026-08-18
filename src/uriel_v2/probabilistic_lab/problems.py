@@ -124,7 +124,7 @@ def draw_sampling_batch(problem: ProblemSpec, rng: np.random.Generator, count: i
     raise ValueError(f"unsupported sampling problem: {problem.problem_family}")
 
 
-def _transformation(problem: ProblemSpec) -> tuple[np.ndarray, np.ndarray]:
+def objective_transformation(problem: ProblemSpec) -> tuple[np.ndarray, np.ndarray]:
     dimension = int(problem.dimension or 1)
     rng = np.random.Generator(np.random.PCG64(problem.problem_seed))
     shift = rng.uniform(-0.25, 0.25, size=dimension)
@@ -135,8 +135,12 @@ def _transformation(problem: ProblemSpec) -> tuple[np.ndarray, np.ndarray]:
     return shift, rotation
 
 
-def evaluate_objective(problem: ProblemSpec, points: np.ndarray) -> np.ndarray:
-    shift, rotation = _transformation(problem)
+def evaluate_objective_with_transformation(
+    problem: ProblemSpec,
+    points: np.ndarray,
+    transformation: tuple[np.ndarray, np.ndarray],
+) -> np.ndarray:
+    shift, rotation = transformation
     values = (points - shift) @ rotation
     variant = problem.extension.get("variant")
     if variant == "ill_conditioned":
@@ -148,6 +152,11 @@ def evaluate_objective(problem: ProblemSpec, points: np.ndarray) -> np.ndarray:
     if problem.problem_family == "rastrigin":
         return 10.0 * values.shape[1] + np.sum(weights * values * values - 10.0 * np.cos(2.0 * np.pi * values), axis=1)
     if problem.problem_family == "rosenbrock":
-        shifted = values + 1.0
+        conditioned_values = values * np.sqrt(weights) if variant == "ill_conditioned" else values
+        shifted = conditioned_values + 1.0
         return np.sum(100.0 * (shifted[:, 1:] - shifted[:, :-1] ** 2) ** 2 + (1.0 - shifted[:, :-1]) ** 2, axis=1)
     raise ValueError(f"unsupported optimization problem: {problem.problem_family}")
+
+
+def evaluate_objective(problem: ProblemSpec, points: np.ndarray) -> np.ndarray:
+    return evaluate_objective_with_transformation(problem, points, objective_transformation(problem))

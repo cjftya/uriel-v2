@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from uriel_v2.logging_config import create_run_directory, setup_logging
+from uriel_v2.probabilistic_lab.phase2 import run_phase2
 from uriel_v2.probabilistic_lab.pilot import run_pilot
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
@@ -26,6 +27,18 @@ def build_parser() -> argparse.ArgumentParser:
     pilot.add_argument("--resume-from", default=None, help="이전 pilot 실행 디렉터리")
     pilot.add_argument("--verbose", action="store_true")
 
+    phase2 = commands.add_parser("phase2", help="RQMC/CMA-ES paired random-mechanism comparison")
+    phase2.add_argument("--output", default="artifacts/probabilistic", help="실행 결과 상위 디렉터리")
+    phase2.add_argument("--instances-per-family", type=int, default=8)
+    phase2.add_argument("--seeds", type=int, default=10, help="problem별 paired seed 수")
+    phase2.add_argument("--master-seed", type=int, default=20_260_820)
+    phase2.add_argument("--sampling-budget", type=int, default=4_096)
+    phase2.add_argument("--optimization-budget", type=int, default=4_096)
+    phase2.add_argument("--bootstrap-iterations", type=int, default=10_000)
+    phase2.add_argument("--workers", default="auto")
+    phase2.add_argument("--resume-from", default=None, help="이전 Phase 2 실행 디렉터리")
+    phase2.add_argument("--verbose", action="store_true")
+
     validate = commands.add_parser("validate", help="생성된 Parquet 데이터셋 품질 검사")
     validate.add_argument("run_directory")
     return parser
@@ -37,6 +50,32 @@ def main(argv: list[str] | None = None) -> int:
         result = validate_dataset(args.run_directory)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["status"] == "PASS" else 1
+    if args.command == "phase2":
+        run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
+            args.output, "probabilistic-phase2"
+        )
+        logger = setup_logging(run_directory, args.verbose)
+        summary = run_phase2(
+            run_directory,
+            instances_per_family=args.instances_per_family,
+            seed_replicates=args.seeds,
+            master_seed=args.master_seed,
+            sampling_budget=args.sampling_budget,
+            optimization_budget=args.optimization_budget,
+            bootstrap_iterations=args.bootstrap_iterations,
+            workers=args.workers,
+            resume=True,
+            logger=logger,
+        )
+        logger.info(
+            "[SUMMARY] status=%s runs=%s pairs=%s directory=%s",
+            summary["status"],
+            summary["run_count"],
+            summary["pair_count"],
+            run_directory,
+        )
+        return 0 if summary["status"] == "PHASE_2_PASS" else 1
+
     run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(args.output, "probabilistic-pilot")
     logger = setup_logging(run_directory, args.verbose)
     summary = run_pilot(

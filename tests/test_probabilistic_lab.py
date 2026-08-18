@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from uriel_v2.probabilistic_lab.budget import checkpoint_steps
+from uriel_v2.probabilistic_lab.cli import build_parser
+from uriel_v2.probabilistic_lab.phase2 import build_phase2_jobs, run_phase2
 from uriel_v2.probabilistic_lab.pilot import build_pilot_jobs, run_pilot
-from uriel_v2.probabilistic_lab.problems import build_pilot_problems
+from uriel_v2.probabilistic_lab.problems import build_pilot_problems, evaluate_objective
 from uriel_v2.probabilistic_lab.runner import execute_job
 from uriel_v2.probabilistic_lab.schema import BudgetSpec
 from uriel_v2.probabilistic_lab.validation import validate_dataset
@@ -46,6 +49,19 @@ def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
     assert first == second
     assert len(first) == 18
     assert len({problem.problem_id for problem in first}) == len(first)
+
+
+def test_ill_conditioned_rosenbrock_changes_axis_scaling() -> None:
+    problems = build_pilot_problems(6, 20260820)
+    ill = next(problem for problem in problems if problem.problem_id == "rosenbrock-0005-ill_conditioned")
+    base = replace(
+        ill,
+        problem_id="rosenbrock-base-control",
+        condition_number=1.0,
+        extension={**ill.extension, "variant": "base"},
+    )
+    point = np.full((1, int(ill.dimension)), 0.5)
+    assert float(evaluate_objective(ill, point)[0]) > float(evaluate_objective(base, point)[0])
 
 
 @pytest.mark.parametrize("domain", ["sampling", "optimization"])
@@ -125,3 +141,71 @@ def test_resume_rejects_changed_job_configuration(tmp_path) -> None:
             random_search_budget=32,
             workers=1,
         )
+
+
+def _phase2_jobs():
+    return build_phase2_jobs(
+        instances_per_family=1,
+        seed_replicates=1,
+        master_seed=20260820,
+        sampling_budget=64,
+        optimization_budget=64,
+    )
+
+
+@pytest.mark.parametrize("algorithm", ["rqmc_sobol", "cma_es"])
+def test_phase2_algorithm_reproduces_scientific_result(algorithm: str) -> None:
+    job = next(job for job in _phase2_jobs() if job.algorithm.algorithm == algorithm)
+    first = execute_job(job)
+    second = execute_job(job)
+    assert first.result.status == "SUCCESS"
+    assert first.result.failure is False
+    assert first.traces[-1].step == job.budget.total
+    assert _scientific_result(first) == _scientific_result(second)
+
+
+def test_phase2_jobs_use_complete_paired_seeds() -> None:
+    jobs = _phase2_jobs()
+    assert len(jobs) == 12
+    pairs = {}
+    for job in jobs:
+        pairs.setdefault((job.problem.problem_id, job.seed), set()).add(job.algorithm.algorithm)
+    assert len(pairs) == 6
+    for (problem_id, _seed), algorithms in pairs.items():
+        expected = {"monte_carlo_iid", "rqmc_sobol"} if "mean" in problem_id else {"random_search", "cma_es"}
+        assert algorithms == expected
+
+
+def test_phase2_pipeline_writes_paired_comparisons(tmp_path) -> None:
+    run_directory = tmp_path / "phase2"
+    summary = run_phase2(
+        run_directory,
+        instances_per_family=1,
+        seed_replicates=2,
+        master_seed=20260820,
+        sampling_budget=64,
+        optimization_budget=64,
+        bootstrap_iterations=100,
+        workers=2,
+    )
+    assert summary["status"] == "PHASE_2_PASS"
+    assert summary["problem_count"] == 6
+    assert summary["run_count"] == 24
+    assert summary["pair_count"] == 12
+    assert summary["failure_count"] == 0
+    assert set(summary["comparison_results"]) == {
+        "sampling_rqmc_vs_iid",
+        "optimization_cmaes_vs_random",
+    }
+    pairs = pd.read_parquet(run_directory / "data/comparisons/paired_runs.parquet")
+    problems = pd.read_parquet(run_directory / "data/comparisons/paired_problem_summary.parquet")
+    assert pairs["pair_id"].is_unique
+    assert len(problems) == 6
+    assert set(pairs["winner"]) <= {"baseline", "challenger", "tie"}
+    assert validate_dataset(run_directory)["status"] == "PASS"
+
+
+def test_cli_exposes_phase2_without_changing_phase1() -> None:
+    parser = build_parser()
+    action = next(item for item in parser._actions if getattr(item, "dest", None) == "command")
+    assert {"pilot", "phase2", "validate"} <= set(action.choices)
