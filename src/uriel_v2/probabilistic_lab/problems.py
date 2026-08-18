@@ -10,6 +10,8 @@ from uriel_v2.probabilistic_lab.schema import ProblemSpec
 
 SAMPLING_FAMILIES = ("gaussian_mean", "student_t_mean", "mixture_mean")
 OPTIMIZATION_FAMILIES = ("sphere", "rastrigin", "rosenbrock")
+SYNTHETIC_SAMPLING_FAMILIES = (*SAMPLING_FAMILIES, "lognormal_mean")
+SYNTHETIC_OPTIMIZATION_FAMILIES = (*OPTIMIZATION_FAMILIES, "ackley", "griewank", "schwefel")
 
 
 def _problem_rng(master_seed: int, family_index: int, instance_index: int) -> np.random.Generator:
@@ -119,8 +121,13 @@ def draw_sampling_batch(problem: ProblemSpec, rng: np.random.Generator, count: i
         return rng.standard_t(degrees_freedom, size=(count, dimension)) * scale
     if problem.problem_family == "mixture_mean":
         separation = float(problem.extension["separation"])
-        signs = rng.choice(np.asarray((-1.0, 1.0)), size=(count, dimension))
+        positive_weight = float(problem.extension.get("positive_weight", 0.5))
+        signs = np.where(rng.random(size=(count, dimension)) < positive_weight, 1.0, -1.0)
         return rng.normal(signs * separation, scale, size=(count, dimension))
+    if problem.problem_family == "lognormal_mean":
+        log_mu = float(problem.extension.get("log_mu", 0.0))
+        log_sigma = float(problem.extension["log_sigma"])
+        return rng.lognormal(log_mu, log_sigma, size=(count, dimension))
     raise ValueError(f"unsupported sampling problem: {problem.problem_family}")
 
 
@@ -155,6 +162,21 @@ def evaluate_objective_with_transformation(
         conditioned_values = values * np.sqrt(weights) if variant == "ill_conditioned" else values
         shifted = conditioned_values + 1.0
         return np.sum(100.0 * (shifted[:, 1:] - shifted[:, :-1] ** 2) ** 2 + (1.0 - shifted[:, :-1]) ** 2, axis=1)
+    conditioned_values = values * np.sqrt(weights) if variant == "ill_conditioned" else values
+    if problem.problem_family == "ackley":
+        squared_mean = np.mean(conditioned_values**2, axis=1)
+        cosine_mean = np.mean(np.cos(2.0 * np.pi * conditioned_values), axis=1)
+        return -20.0 * np.exp(-0.2 * np.sqrt(squared_mean)) - np.exp(cosine_mean) + 20.0 + math.e
+    if problem.problem_family == "griewank":
+        indices = np.sqrt(np.arange(1, conditioned_values.shape[1] + 1, dtype=float))
+        return np.sum(conditioned_values**2, axis=1) / 4_000.0 - np.prod(
+            np.cos(conditioned_values / indices), axis=1
+        ) + 1.0
+    if problem.problem_family == "schwefel":
+        shifted = conditioned_values + 420.9687462275036
+        return 418.9828872724338 * shifted.shape[1] - np.sum(
+            shifted * np.sin(np.sqrt(np.abs(shifted))), axis=1
+        )
     raise ValueError(f"unsupported optimization problem: {problem.problem_family}")
 
 

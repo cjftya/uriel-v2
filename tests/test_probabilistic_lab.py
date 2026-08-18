@@ -10,9 +10,20 @@ from uriel_v2.probabilistic_lab.budget import checkpoint_steps
 from uriel_v2.probabilistic_lab.cli import build_parser
 from uriel_v2.probabilistic_lab.phase2 import build_phase2_jobs, run_phase2
 from uriel_v2.probabilistic_lab.pilot import build_pilot_jobs, run_pilot
-from uriel_v2.probabilistic_lab.problems import build_pilot_problems, evaluate_objective
+from uriel_v2.probabilistic_lab.phase3 import run_phase3, validate_phase3_dataset
+from uriel_v2.probabilistic_lab.problems import (
+    build_pilot_problems,
+    evaluate_objective,
+    objective_transformation,
+)
 from uriel_v2.probabilistic_lab.runner import execute_job
-from uriel_v2.probabilistic_lab.schema import BudgetSpec
+from uriel_v2.probabilistic_lab.schema import AlgorithmSpec, BudgetSpec, JobSpec
+from uriel_v2.probabilistic_lab.synthetic import (
+    SYNTHETIC_FAMILIES,
+    build_synthetic_benchmark,
+    materialize_matrix,
+    materialize_stream,
+)
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
 
@@ -208,4 +219,99 @@ def test_phase2_pipeline_writes_paired_comparisons(tmp_path) -> None:
 def test_cli_exposes_phase2_without_changing_phase1() -> None:
     parser = build_parser()
     action = next(item for item in parser._actions if getattr(item, "dest", None) == "command")
-    assert {"pilot", "phase2", "validate"} <= set(action.choices)
+    assert {"pilot", "phase2", "phase3", "validate"} <= set(action.choices)
+
+
+def test_phase3_synthetic_benchmark_is_balanced_and_reproducible() -> None:
+    first = build_synthetic_benchmark(12, 20260821)
+    second = build_synthetic_benchmark(12, 20260821)
+    family_count = sum(len(families) for families in SYNTHETIC_FAMILIES.values())
+    assert first == second
+    assert len(first) == 12 * family_count
+    assert len({problem.problem_id for problem in first}) == len(first)
+    assert len({problem.problem_seed for problem in first}) == len(first)
+    assert {problem.domain for problem in first} == set(SYNTHETIC_FAMILIES)
+    for family in {problem.problem_family for problem in first}:
+        dimensions = [problem.dimension for problem in first if problem.problem_family == family]
+        counts = pd.Series(dimensions).value_counts()
+        assert int(counts.max() - counts.min()) <= 1
+
+
+@pytest.mark.parametrize("family", ["ackley", "griewank", "schwefel"])
+def test_phase3_optimization_family_has_zero_at_transformed_optimum(family: str) -> None:
+    problems = build_synthetic_benchmark(6, 20260821)
+    problem = next(item for item in problems if item.problem_family == family)
+    shift, _rotation = objective_transformation(problem)
+    objective = float(evaluate_objective(problem, shift.reshape(1, -1))[0])
+    assert objective == pytest.approx(0.0, abs=1e-5)
+
+
+@pytest.mark.parametrize("algorithm", ["monte_carlo_iid", "rqmc_sobol"])
+def test_phase3_lognormal_sampling_is_executable(algorithm: str) -> None:
+    problem = next(item for item in build_synthetic_benchmark(2, 20260821) if item.problem_family == "lognormal_mean")
+    spec = AlgorithmSpec(
+        algorithm=algorithm,
+        algorithm_family="independent_sampling" if algorithm == "monte_carlo_iid" else "structured_sampling",
+        random_mechanism="Independent Sampling" if algorithm == "monte_carlo_iid" else "Structured Sampling",
+    )
+    job = JobSpec(problem=problem, algorithm=spec, seed=1234, budget=BudgetSpec("samples", 64))
+    first = execute_job(job)
+    second = execute_job(job)
+    assert first.result.status == "SUCCESS"
+    assert _scientific_result(first) == _scientific_result(second)
+
+
+def test_phase3_all_ready_families_execute() -> None:
+    problems = build_synthetic_benchmark(1, 20260821)
+    for problem in problems:
+        if problem.domain not in {"sampling", "optimization"}:
+            continue
+        algorithms = (
+            (
+                AlgorithmSpec("monte_carlo_iid", "independent_sampling", "Independent Sampling"),
+                AlgorithmSpec("rqmc_sobol", "structured_sampling", "Structured Sampling"),
+            )
+            if problem.domain == "sampling"
+            else (
+                AlgorithmSpec("random_search", "random_search", "Independent Sampling"),
+                AlgorithmSpec("cma_es", "adaptive_distribution", "Adaptive Distribution"),
+            )
+        )
+        for algorithm in algorithms:
+            budget_type = "samples" if problem.domain == "sampling" else "evaluations"
+            job = JobSpec(problem, algorithm, 9876, BudgetSpec(budget_type, 64))
+            bundle = execute_job(job)
+            assert bundle.result.status == "SUCCESS", (problem.problem_family, algorithm.algorithm)
+            assert np.isfinite(bundle.result.quality_final)
+
+
+def test_phase3_staged_problems_materialize_deterministically() -> None:
+    problems = build_synthetic_benchmark(1, 20260821)
+    matrix_problem = next(item for item in problems if item.domain == "matrix")
+    stream_problem = next(item for item in problems if item.problem_family == "concept_drift_stream")
+    matrix = materialize_matrix(matrix_problem)
+    stream = materialize_stream(stream_problem, size=256)
+    assert matrix.shape == (int(matrix_problem.extension["rows"]), int(matrix_problem.extension["columns"]))
+    assert np.array_equal(matrix, materialize_matrix(matrix_problem))
+    assert stream.shape == (256,)
+    assert np.array_equal(stream, materialize_stream(stream_problem, size=256))
+
+
+def test_phase3_pipeline_writes_valid_benchmark(tmp_path) -> None:
+    run_directory = tmp_path / "phase3"
+    summary = run_phase3(
+        run_directory,
+        instances_per_family=6,
+        master_seed=20260821,
+        folds=3,
+        minimum_problem_count=100,
+    )
+    assert summary["status"] == "PHASE_3_PASS"
+    assert summary["problem_count"] == 102
+    assert summary["family_count"] == 17
+    assert summary["domain_count"] == 4
+    assert summary["phase3_checks"]["required_structure_axes_varied"] is True
+    assert validate_phase3_dataset(run_directory)["status"] == "PASS"
+    index = pd.read_parquet(run_directory / "data/benchmark/benchmark_index.parquet")
+    assert set(index["execution_tier"]) == {"ready", "staged"}
+    assert set(index["instance_fold"]) == {0, 1, 2}

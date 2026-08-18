@@ -38,9 +38,14 @@ def _transform(problem_family: str, extension: dict, dimension: int, points: np.
         return stats.t.ppf(clipped[:, :dimension], df=degrees_freedom) * scale
     if problem_family == "mixture_mean":
         separation = float(extension["separation"])
-        signs = np.where(clipped[:, :dimension] < 0.5, -1.0, 1.0)
+        positive_weight = float(extension.get("positive_weight", 0.5))
+        signs = np.where(clipped[:, :dimension] < positive_weight, 1.0, -1.0)
         noise = stats.norm.ppf(clipped[:, dimension : 2 * dimension]) * scale
         return signs * separation + noise
+    if problem_family == "lognormal_mean":
+        log_mu = float(extension.get("log_mu", 0.0))
+        log_sigma = float(extension["log_sigma"])
+        return np.exp(log_mu + log_sigma * stats.norm.ppf(clipped[:, :dimension]))
     raise ValueError(f"unsupported RQMC problem: {problem_family}")
 
 

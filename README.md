@@ -2,7 +2,7 @@
 
 재현 가능한 한국 로또 6/45 시드 실험과 범용 확률 알고리즘 성능 예측 연구를 함께 관리하는 Python 프로젝트입니다. 두 연구 영역은 패키지와 출력 경로를 분리하며, UI 없이 CLI, 로그, Parquet/CSV/JSON 결과에 집중합니다.
 
-현재 v0.8의 범위는 다음과 같습니다.
+현재 v0.9의 범위는 다음과 같습니다.
 
 - `lotto.xlsx` 구조 자동 인식 및 데이터 검증
 - Python 버전과 무관하게 같은 결과를 내는 SplitMix64 번호 생성기
@@ -30,6 +30,8 @@
 - scrambled Sobol RQMC와 CMA-ES
 - 동일 problem·seed·budget 기반 paired random-mechanism comparison
 - problem-instance 단위 bootstrap CI, Wilcoxon 검정, paired oracle regret
+- 4개 domain·17개 family의 균형 synthetic benchmark generator
+- problem-instance split과 future algorithm용 Matrix/Stream staged problem
 
 > 역산 탐색은 이미 알려진 정답을 사용합니다. 시드 공간의 구조와 근접도를 살피는 진단 실험이지, 그 자체가 미래 회차 예측은 아닙니다.
 
@@ -85,6 +87,29 @@ python -m uriel_v2.probabilistic_lab phase2 \
 | `comparison_summary.json` | bootstrap CI, Wilcoxon, win rate, mechanism 판정 |
 
 통계 추론 단위는 개별 seed row가 아니라 problem-instance 평균입니다. Phase 2의 `MECHANISM_SIGNAL`은 paired benchmark 내부 신호이며, 아직 범용 algorithm-selection 모델의 성공을 의미하지 않습니다.
+
+### Phase 3 — Balanced synthetic benchmark
+
+Sampling, Optimization, Matrix, Stream의 구조 축을 의도적으로 변화시킨 문제 metadata를 생성합니다. 기본 실행은 17개 family에서 각각 128개 instance, 총 2,176개 문제를 만듭니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase3 \
+  --instances-per-family 128 \
+  --master-seed 20260821 \
+  --folds 5
+```
+
+Sampling과 Optimization의 10개 family는 현재 Monte Carlo/RQMC 또는 Random Search/CMA-ES로 실행할 수 있습니다. Matrix와 Stream의 7개 family는 Randomized SVD, Count-Min Sketch 등 다음 알고리즘을 추가할 때 schema를 바꾸지 않도록 staged problem으로 먼저 고정합니다.
+
+| 파일 | 내용 |
+|---|---|
+| `data/problems/problem_metadata.parquet` | 4개 domain의 공통 problem schema |
+| `data/features/problem_features.parquet` | 모델 입력용 동일 problem feature table |
+| `data/benchmark/benchmark_index.parquet` | execution tier, 구조 regime, instance/family holdout fold |
+| `manifest.json` | family/domain 수, split 규칙, content SHA-256 |
+| `validation.json` | 중복, 균형 축, JSON, fold, content hash 검사 |
+
+future run은 같은 `problem_id`의 모든 algorithm과 seed를 동일 split에 배치해야 합니다.
 
 ## 설치
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from uriel_v2.logging_config import create_run_directory, setup_logging
 from uriel_v2.probabilistic_lab.phase2 import run_phase2
+from uriel_v2.probabilistic_lab.phase3 import run_phase3, validate_phase3_dataset
 from uriel_v2.probabilistic_lab.pilot import run_pilot
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
@@ -39,6 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
     phase2.add_argument("--resume-from", default=None, help="이전 Phase 2 실행 디렉터리")
     phase2.add_argument("--verbose", action="store_true")
 
+    phase3 = commands.add_parser("phase3", help="balanced multi-domain synthetic problem benchmark")
+    phase3.add_argument("--output", default="artifacts/probabilistic", help="실행 결과 상위 디렉터리")
+    phase3.add_argument("--instances-per-family", type=int, default=128)
+    phase3.add_argument("--master-seed", type=int, default=20_260_821)
+    phase3.add_argument("--folds", type=int, default=5)
+    phase3.add_argument("--minimum-problems", type=int, default=1_000)
+    phase3.add_argument("--verbose", action="store_true")
+
     validate = commands.add_parser("validate", help="생성된 Parquet 데이터셋 품질 검사")
     validate.add_argument("run_directory")
     return parser
@@ -47,9 +56,33 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "validate":
-        result = validate_dataset(args.run_directory)
+        run_directory = Path(args.run_directory)
+        if (run_directory / "manifest.json").exists() and not (run_directory / "data/runs/runs.parquet").exists():
+            result = validate_phase3_dataset(run_directory)
+        else:
+            result = validate_dataset(run_directory)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["status"] == "PASS" else 1
+    if args.command == "phase3":
+        run_directory = create_run_directory(args.output, "probabilistic-phase3")
+        logger = setup_logging(run_directory, args.verbose)
+        summary = run_phase3(
+            run_directory,
+            instances_per_family=args.instances_per_family,
+            master_seed=args.master_seed,
+            folds=args.folds,
+            minimum_problem_count=args.minimum_problems,
+            logger=logger,
+        )
+        logger.info(
+            "[SUMMARY] status=%s problems=%s families=%s domains=%s directory=%s",
+            summary["status"],
+            summary["problem_count"],
+            summary["family_count"],
+            summary["domain_count"],
+            run_directory,
+        )
+        return 0 if summary["status"] == "PHASE_3_PASS" else 1
     if args.command == "phase2":
         run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
             args.output, "probabilistic-phase2"
