@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
@@ -65,6 +66,41 @@ class ProblemSpec:
             "effective_dimension": _optional_float(self.effective_dimension),
             "extension_json": canonical_json(dict(self.extension)),
         }
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> "ProblemSpec":
+        def optional_value(name: str) -> Any:
+            value = record.get(name)
+            if value is None or (isinstance(value, float) and math.isnan(value)):
+                return None
+            return value
+
+        if record.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError(f"problem schema mismatch: {record.get('schema_version')}")
+        extension = record.get("extension")
+        if extension is None:
+            extension = json.loads(str(record.get("extension_json", "{}")))
+        return cls(
+            problem_id=str(record["problem_id"]),
+            problem_family=str(record["problem_family"]),
+            domain=str(record["domain"]),
+            problem_seed=int(record["problem_seed"]),
+            dimension=None if optional_value("dimension") is None else int(optional_value("dimension")),
+            size=None if optional_value("size") is None else int(optional_value("size")),
+            density=optional_value("density"),
+            sparsity=optional_value("sparsity"),
+            noise=optional_value("noise"),
+            entropy=optional_value("entropy"),
+            skewness=optional_value("skewness"),
+            kurtosis=optional_value("kurtosis"),
+            autocorrelation=optional_value("autocorrelation"),
+            condition_number=optional_value("condition_number"),
+            spectral_decay=optional_value("spectral_decay"),
+            multimodality=optional_value("multimodality"),
+            ruggedness=optional_value("ruggedness"),
+            effective_dimension=optional_value("effective_dimension"),
+            extension=extension,
+        )
 
 
 @dataclass(frozen=True)

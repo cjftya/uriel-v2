@@ -66,6 +66,7 @@ def write_dataset(run_directory: str | Path, jobs: Iterable[JobSpec], checkpoint
     problems.to_parquet(destinations["problems"], index=False)
     runs.to_parquet(destinations["runs"], index=False)
     traces.to_parquet(destinations["traces"], index=False)
-    problems.to_parquet(destinations["problem_features"], index=False)
+    problem_features = problems.drop(columns=["problem_seed"], errors="ignore")
+    problem_features.to_parquet(destinations["problem_features"], index=False)
     trajectory_features.to_parquet(destinations["trajectory_features"], index=False)
     return destinations

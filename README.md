@@ -111,6 +111,28 @@ Sampling과 Optimization의 10개 family는 현재 Monte Carlo/RQMC 또는 Rando
 
 future run은 같은 `problem_id`의 모든 algorithm과 seed를 동일 split에 배치해야 합니다.
 
+### Phase 4–5 — Repeated execution and quality gate
+
+Phase 4는 Phase 3의 `ready` 문제 전체를 알고리즘 pair와 10개 seed로 반복 실행합니다. 기본 benchmark에서는 1,280개 문제, 25,600개 run, 12,800개 pair가 생성됩니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase4 \
+  --benchmark artifacts/probabilistic/PHASE3_RUN \
+  --seeds 10 \
+  --sampling-budget 1024 \
+  --optimization-budget 1024 \
+  --workers auto
+```
+
+Phase 5는 모델링 전에 Phase 4 데이터의 계획 job 일치, seed 반복, pair coverage, trace, split leakage, seed feature leakage, runtime anomaly와 결정론적 재실행을 검사합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase5 \
+  --phase4 artifacts/probabilistic/PHASE4_RUN
+```
+
+Phase 5가 `PHASE_5_PASS`가 아니면 이후 feature engineering과 모델링을 시작하지 않습니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.

@@ -25,9 +25,17 @@ def resolve_workers(value: str | int) -> int:
         raise ValueError("workers must be a positive integer or auto") from exc
 
 
-def _log_bundle(logger: logging.Logger, bundle: ExperimentBundle, completed: int, total: int) -> None:
+def _log_bundle(
+    logger: logging.Logger,
+    bundle: ExperimentBundle,
+    completed: int,
+    total: int,
+    *,
+    info: bool = True,
+) -> None:
     result = bundle.result
-    logger.info(
+    log_result = logger.info if info or result.failure else logger.debug
+    log_result(
         "[RESULT] %s/%s run=%s problem=%s algorithm=%s status=%s quality=%s runtime=%.4fs",
         completed,
         total,
@@ -58,8 +66,11 @@ def run_jobs(
     workers: str | int = "auto",
     resume: bool = True,
     logger: logging.Logger | None = None,
+    progress_interval: int = 1,
 ) -> list[dict]:
     job_list = list(jobs)
+    if progress_interval <= 0:
+        raise ValueError("progress_interval must be positive")
     run_ids = [job.run_id for job in job_list]
     if len(run_ids) != len(set(run_ids)):
         raise ValueError("duplicate run_id in job list")
@@ -95,7 +106,8 @@ def run_jobs(
             bundle = execute_job(job)
             append_checkpoint(checkpoint_path, bundle.to_checkpoint_record())
             completed += 1
-            _log_bundle(log, bundle, completed, len(job_list))
+            show_progress = completed <= 3 or completed == len(job_list) or completed % progress_interval == 0
+            _log_bundle(log, bundle, completed, len(job_list), info=show_progress)
     else:
         with ProcessPoolExecutor(
             max_workers=worker_count,
@@ -111,7 +123,8 @@ def run_jobs(
                     raise
                 append_checkpoint(checkpoint_path, bundle.to_checkpoint_record())
                 completed += 1
-                _log_bundle(log, bundle, completed, len(job_list))
+                show_progress = completed <= 3 or completed == len(job_list) or completed % progress_interval == 0
+                _log_bundle(log, bundle, completed, len(job_list), info=show_progress)
     records = read_checkpoint(checkpoint_path)
     log.info("[WORKER] DONE jobs=%s failures=%s", len(records), sum(record["result"]["failure"] for record in records))
     return records

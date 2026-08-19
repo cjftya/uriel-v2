@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from uriel_v2.logging_config import _timezone
-from uriel_v2.probabilistic_lab.schema import canonical_json
+from uriel_v2.probabilistic_lab.schema import ProblemSpec, canonical_json
 from uriel_v2.probabilistic_lab.synthetic import (
     BENCHMARK_VERSION,
     READY_DOMAINS,
@@ -206,6 +206,25 @@ def validate_phase3_dataset(run_directory: str | Path) -> dict[str, Any]:
     return validate_phase3_frames(problems, benchmark_index, manifest)
 
 
+def load_phase3_problems(
+    run_directory: str | Path,
+    *,
+    execution_tier: str | None = None,
+) -> list[ProblemSpec]:
+    run_path = Path(run_directory)
+    validation = validate_phase3_dataset(run_path)
+    if validation["status"] != "PASS":
+        raise ValueError(f"invalid Phase 3 benchmark: {validation['issues'][:3]}")
+    problems = pd.read_parquet(run_path / "data/problems/problem_metadata.parquet")
+    if execution_tier is not None:
+        tiers = pd.read_parquet(run_path / "data/benchmark/benchmark_index.parquet")[
+            ["problem_id", "execution_tier"]
+        ]
+        problems = problems.merge(tiers, on="problem_id", how="left", validate="one_to_one")
+        problems = problems[problems["execution_tier"] == execution_tier].drop(columns=["execution_tier"])
+    return [ProblemSpec.from_record(record) for record in problems.sort_values("problem_id").to_dict("records")]
+
+
 def run_phase3(
     run_directory: str | Path,
     *,
@@ -251,7 +270,7 @@ def run_phase3(
     for destination in destinations.values():
         destination.parent.mkdir(parents=True, exist_ok=True)
     problem_frame.to_parquet(destinations["problems"], index=False)
-    problem_frame.to_parquet(destinations["problem_features"], index=False)
+    problem_frame.drop(columns=["problem_seed"]).to_parquet(destinations["problem_features"], index=False)
     index_frame.to_parquet(destinations["benchmark_index"], index=False)
     _json_dump(run_path / "manifest.json", manifest)
 

@@ -11,6 +11,8 @@ from uriel_v2.probabilistic_lab.cli import build_parser
 from uriel_v2.probabilistic_lab.phase2 import build_phase2_jobs, run_phase2
 from uriel_v2.probabilistic_lab.pilot import build_pilot_jobs, run_pilot
 from uriel_v2.probabilistic_lab.phase3 import run_phase3, validate_phase3_dataset
+from uriel_v2.probabilistic_lab.phase4 import run_phase4
+from uriel_v2.probabilistic_lab.phase5 import run_phase5
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -125,9 +127,11 @@ def test_worker_checkpoint_parquet_and_resume(tmp_path) -> None:
     runs = pd.read_parquet(run_directory / "data/runs/runs.parquet")
     traces = pd.read_parquet(run_directory / "data/traces/common/trace_common.parquet")
     features = pd.read_parquet(run_directory / "data/features/trajectory_features.parquet")
+    problem_features = pd.read_parquet(run_directory / "data/features/problem_features.parquet")
     assert runs["run_id"].is_unique
     assert set(traces["run_id"]) == set(runs["run_id"])
     assert len(features) == 18
+    assert "problem_seed" not in problem_features.columns
     assert validate_dataset(run_directory)["status"] == "PASS"
 
 
@@ -219,7 +223,7 @@ def test_phase2_pipeline_writes_paired_comparisons(tmp_path) -> None:
 def test_cli_exposes_phase2_without_changing_phase1() -> None:
     parser = build_parser()
     action = next(item for item in parser._actions if getattr(item, "dest", None) == "command")
-    assert {"pilot", "phase2", "phase3", "validate"} <= set(action.choices)
+    assert {"pilot", "phase2", "phase3", "phase4", "phase5", "validate"} <= set(action.choices)
 
 
 def test_phase3_synthetic_benchmark_is_balanced_and_reproducible() -> None:
@@ -315,3 +319,42 @@ def test_phase3_pipeline_writes_valid_benchmark(tmp_path) -> None:
     index = pd.read_parquet(run_directory / "data/benchmark/benchmark_index.parquet")
     assert set(index["execution_tier"]) == {"ready", "staged"}
     assert set(index["instance_fold"]) == {0, 1, 2}
+    problem_features = pd.read_parquet(run_directory / "data/features/problem_features.parquet")
+    assert "problem_seed" not in problem_features.columns
+
+
+def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
+    benchmark_directory = tmp_path / "phase3"
+    phase4_directory = tmp_path / "phase4"
+    phase5_directory = tmp_path / "phase5"
+    phase3 = run_phase3(
+        benchmark_directory,
+        instances_per_family=6,
+        master_seed=20260821,
+        folds=3,
+        minimum_problem_count=100,
+    )
+    assert phase3["status"] == "PHASE_3_PASS"
+    phase4 = run_phase4(
+        phase4_directory,
+        benchmark_directory,
+        seed_replicates=2,
+        master_seed=20260822,
+        sampling_budget=64,
+        optimization_budget=64,
+        bootstrap_iterations=100,
+        workers=2,
+    )
+    assert phase4["status"] == "PHASE_4_PASS"
+    assert phase4["problem_count"] == 60
+    assert phase4["run_count"] == 240
+    assert phase4["pair_count"] == 120
+    phase5 = run_phase5(
+        phase5_directory,
+        phase4_directory,
+        reproducibility_samples_per_algorithm_family=1,
+    )
+    assert phase5["status"] == "PHASE_5_PASS"
+    assert phase5["critical_issue_count"] == 0
+    assert phase5["reproducibility_check_count"] == 20
+    assert phase5["reproducibility_mismatch_count"] == 0

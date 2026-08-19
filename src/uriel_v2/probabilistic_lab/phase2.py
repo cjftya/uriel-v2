@@ -28,7 +28,7 @@ COMPARISONS = {
 }
 
 
-def _algorithms() -> dict[str, AlgorithmSpec]:
+def core_algorithms() -> dict[str, AlgorithmSpec]:
     return {
         "monte_carlo_iid": AlgorithmSpec(
             algorithm="monte_carlo_iid",
@@ -67,7 +67,7 @@ def build_phase2_jobs(
 ) -> list[JobSpec]:
     if seed_replicates <= 0:
         raise ValueError("seed_replicates must be positive")
-    algorithms = _algorithms()
+    algorithms = core_algorithms()
     problems = build_pilot_problems(instances_per_family, master_seed)
     jobs: list[JobSpec] = []
     for problem_index, problem in enumerate(problems):
