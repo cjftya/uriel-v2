@@ -208,16 +208,16 @@ def _optimization_problem(
         "rosenbrock": (-2.048, 2.048),
         "ackley": (-32.768, 32.768),
         "griewank": (-600.0, 600.0),
-        "schwefel": (-500.0, 500.0),
+        "schwefel": (-100.0, 100.0),
     }[family]
-    multimodality = 1.0 if family in {"sphere", "rosenbrock"} else 10.0
+    multimodality = 1.0 if family in {"sphere", "rosenbrock", "schwefel"} else 10.0
     ruggedness = {
         "sphere": 0.0,
         "rosenbrock": 0.7,
         "rastrigin": 1.0,
         "ackley": 0.9,
         "griewank": 0.8,
-        "schwefel": 1.0,
+        "schwefel": 0.5,
     }[family]
     condition_number = ill_condition if variant == "ill_conditioned" else (100.0 if family == "rosenbrock" else 1.0)
     return ProblemSpec(
@@ -237,6 +237,7 @@ def _optimization_problem(
             "lower_bound": bounds[0],
             "upper_bound": bounds[1],
             "variant": variant,
+            "objective_variant": "schwefel_1_2" if family == "schwefel" else family,
             "target_quality": 0.95,
         },
     )

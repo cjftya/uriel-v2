@@ -250,6 +250,20 @@ def test_phase3_optimization_family_has_zero_at_transformed_optimum(family: str)
     assert objective == pytest.approx(0.0, abs=1e-5)
 
 
+def test_phase3_optimization_objectives_are_finite_and_nonnegative() -> None:
+    rng = np.random.Generator(np.random.PCG64(20260821))
+    problems = build_synthetic_benchmark(6, 20260821)
+    for problem in problems:
+        if problem.domain != "optimization":
+            continue
+        lower = float(problem.extension["lower_bound"])
+        upper = float(problem.extension["upper_bound"])
+        points = rng.uniform(lower, upper, size=(32, int(problem.dimension)))
+        objectives = evaluate_objective(problem, points)
+        assert np.isfinite(objectives).all(), problem.problem_id
+        assert (objectives >= -1e-12).all(), problem.problem_id
+
+
 @pytest.mark.parametrize("algorithm", ["monte_carlo_iid", "rqmc_sobol"])
 def test_phase3_lognormal_sampling_is_executable(algorithm: str) -> None:
     problem = next(item for item in build_synthetic_benchmark(2, 20260821) if item.problem_family == "lognormal_mean")

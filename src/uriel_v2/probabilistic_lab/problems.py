@@ -173,10 +173,8 @@ def evaluate_objective_with_transformation(
             np.cos(conditioned_values / indices), axis=1
         ) + 1.0
     if problem.problem_family == "schwefel":
-        shifted = conditioned_values + 420.9687462275036
-        return 418.9828872724338 * shifted.shape[1] - np.sum(
-            shifted * np.sin(np.sqrt(np.abs(shifted))), axis=1
-        )
+        cumulative = np.cumsum(conditioned_values, axis=1)
+        return np.sum(cumulative**2, axis=1)
     raise ValueError(f"unsupported optimization problem: {problem.problem_family}")
 
 
