@@ -193,14 +193,20 @@ def run_phase5(
 
     runtime_outliers = 0
     runtime_details: dict[str, Any] = {}
-    for algorithm, group in runs.groupby("algorithm"):
+    runtime_frame = runs.merge(
+        problems[["problem_id", "dimension"]],
+        on="problem_id",
+        how="left",
+        validate="many_to_one",
+    )
+    for (algorithm, dimension), group in runtime_frame.groupby(["algorithm", "dimension"]):
         values = group["runtime"].astype(float)
         median = float(values.median())
         mad = float(np.median(np.abs(values - median)))
         threshold = max(median * 5.0, median + 8.0 * max(mad, 1e-12))
         count = int((values > threshold).sum())
         runtime_outliers += count
-        runtime_details[str(algorithm)] = {
+        runtime_details[f"{algorithm}|dimension={int(dimension)}"] = {
             "median": median,
             "mad": mad,
             "outlier_threshold": threshold,
