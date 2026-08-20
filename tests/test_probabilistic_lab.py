@@ -15,6 +15,7 @@ from uriel_v2.probabilistic_lab.phase4 import run_phase4
 from uriel_v2.probabilistic_lab.phase5 import run_phase5
 from uriel_v2.probabilistic_lab.phase6 import run_phase6
 from uriel_v2.probabilistic_lab.phase7 import run_phase7
+from uriel_v2.probabilistic_lab.phase8 import run_phase8
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -225,7 +226,7 @@ def test_phase2_pipeline_writes_paired_comparisons(tmp_path) -> None:
 def test_cli_exposes_phase2_without_changing_phase1() -> None:
     parser = build_parser()
     action = next(item for item in parser._actions if getattr(item, "dest", None) == "command")
-    assert {"pilot", "phase2", "phase3", "phase4", "phase5", "phase6", "phase7", "validate"} <= set(action.choices)
+    assert {"pilot", "phase2", "phase3", "phase4", "phase5", "phase6", "phase7", "phase8", "validate"} <= set(action.choices)
 
 
 def test_phase3_synthetic_benchmark_is_balanced_and_reproducible() -> None:
@@ -419,6 +420,47 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     )
     assert resumed_phase7["status"] == "PHASE_7_PASS"
     assert (phase7_directory / "manifest.json").read_bytes() == phase7_manifest_before
+
+    phase8_directory = tmp_path / "phase8"
+    phase8 = run_phase8(
+        phase8_directory,
+        phase6_directory,
+        phase7_directory,
+        gradient_boosting_iterations=8,
+    )
+    assert phase8["status"] == "PHASE_8_PASS"
+    assert phase8["job_count"] == 6
+    assert phase8["prediction_row_count"] == 1_440
+    assert phase8["model_artifact_count"] == 6
+    assert phase8["quantile_count"] == 7
+    assert phase8["aggregate_metric_row_count"] == 8
+    distribution = pd.read_parquet(
+        phase8_directory / "data/predictions/oof_quality_distribution.parquet"
+    )
+    quantile_columns = ["q05", "q10", "q25", "q50", "q75", "q90", "q95"]
+    assert not distribution.duplicated(["feature_id", "split_name"]).any()
+    assert np.isfinite(distribution[quantile_columns].to_numpy(dtype=float)).all()
+    assert (np.diff(distribution[quantile_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
+    assert distribution["pit"].between(0.0, 1.0).all()
+
+    phase8_manifest_before = (phase8_directory / "manifest.json").read_bytes()
+    resumed_phase8 = run_phase8(
+        phase8_directory,
+        phase6_directory,
+        phase7_directory,
+        gradient_boosting_iterations=8,
+    )
+    assert resumed_phase8["status"] == "PHASE_8_PASS"
+    assert (phase8_directory / "manifest.json").read_bytes() == phase8_manifest_before
+
+    (phase8_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 8 resume manifest hash mismatch"):
+        run_phase8(
+            phase8_directory,
+            phase6_directory,
+            phase7_directory,
+            gradient_boosting_iterations=8,
+        )
 
     (phase7_directory / "manifest.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="completed Phase 7 resume manifest hash mismatch"):

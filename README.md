@@ -185,6 +185,34 @@ python -m uriel_v2.probabilistic_lab phase7 \
 survival runtime, hierarchical Bayesian 및 Mixture-of-Experts는 Phase 7 범위에 포함하지
 않고 이후 Phase에서 다룹니다.
 
+### Phase 8 — Conditional quality distribution
+
+Phase 8은 Phase 6 feature와 Phase 7 PASS 산출물을 동결 입력으로 사용해 최종 quality의
+조건부 확률분포를 학습합니다. 5%·10%·25%·50%·75%·90%·95% quantile gradient boosting을
+각 holdout fold에서 학습하고, 교차된 quantile은 단조 증가 재배열로 보정해 bounded
+piecewise-linear CDF로 복원합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase8 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN
+```
+
+NLL, CRPS, quantile calibration, 80%·90% interval coverage, threshold Brier를 instance
+holdout과 family holdout에서 기록합니다. 각 split/fold 모델은 예측·metric·7개 quantile
+estimator artifact와 SHA-256 완료 marker를 남깁니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase8 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --resume-from artifacts/probabilistic/PHASE8_RUN
+```
+
+`PHASE_8_PASS`는 입력 동결, problem split 무누수, OOF coverage, quantile 단조성·범위,
+분포 metric 유한성 및 hash 무결성만 검사합니다. metric의 성능 수준은 PASS/FAIL에 사용하지
+않고 16개 Phase 완료 후 판단합니다. Failure 확률과 failure type 모델링은 Phase 9 범위입니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.
