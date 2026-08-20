@@ -14,6 +14,7 @@ from uriel_v2.probabilistic_lab.phase3 import run_phase3, validate_phase3_datase
 from uriel_v2.probabilistic_lab.phase4 import run_phase4
 from uriel_v2.probabilistic_lab.phase5 import run_phase5
 from uriel_v2.probabilistic_lab.phase6 import run_phase6
+from uriel_v2.probabilistic_lab.phase7 import run_phase7
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -224,7 +225,7 @@ def test_phase2_pipeline_writes_paired_comparisons(tmp_path) -> None:
 def test_cli_exposes_phase2_without_changing_phase1() -> None:
     parser = build_parser()
     action = next(item for item in parser._actions if getattr(item, "dest", None) == "command")
-    assert {"pilot", "phase2", "phase3", "phase4", "phase5", "phase6", "validate"} <= set(action.choices)
+    assert {"pilot", "phase2", "phase3", "phase4", "phase5", "phase6", "phase7", "validate"} <= set(action.choices)
 
 
 def test_phase3_synthetic_benchmark_is_balanced_and_reproducible() -> None:
@@ -390,6 +391,43 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
         "target_failure",
     }
     assert set(features["feature_id"]) == set(targets["feature_id"])
+
+    phase7_directory = tmp_path / "phase7"
+    phase7 = run_phase7(
+        phase7_directory,
+        phase6_directory,
+        random_forest_estimators=4,
+        gradient_boosting_iterations=10,
+    )
+    assert phase7["status"] == "PHASE_7_PASS"
+    assert phase7["job_count"] == 54
+    assert phase7["prediction_row_count"] == 12_960
+    assert phase7["model_artifact_count"] == 54
+    assert phase7["fit_status_counts"] == {"fitted": 36, "constant_fallback": 18}
+    predictions = pd.read_parquet(phase7_directory / "data/predictions/oof_predictions.parquet")
+    assert not predictions.duplicated(["feature_id", "split_name", "target", "model"]).any()
+    assert predictions.loc[predictions["target"] == "quality", "prediction"].between(0.0, 1.0).all()
+    assert predictions.loc[predictions["target"] == "runtime", "prediction"].ge(0.0).all()
+    assert predictions.loc[predictions["target"] == "failure", "prediction"].between(0.0, 1.0).all()
+
+    phase7_manifest_before = (phase7_directory / "manifest.json").read_bytes()
+    resumed_phase7 = run_phase7(
+        phase7_directory,
+        phase6_directory,
+        random_forest_estimators=4,
+        gradient_boosting_iterations=10,
+    )
+    assert resumed_phase7["status"] == "PHASE_7_PASS"
+    assert (phase7_directory / "manifest.json").read_bytes() == phase7_manifest_before
+
+    (phase7_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 7 resume manifest hash mismatch"):
+        run_phase7(
+            phase7_directory,
+            phase6_directory,
+            random_forest_estimators=4,
+            gradient_boosting_iterations=10,
+        )
 
     manifest_before = (phase6_directory / "manifest.json").read_bytes()
     resumed = run_phase6(phase6_directory, phase4_directory, phase5_directory)

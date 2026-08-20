@@ -157,6 +157,34 @@ python -m uriel_v2.probabilistic_lab phase6 \
 
 `PHASE_6_PASS` 전에는 Phase 7 모델링을 시작하지 않습니다.
 
+### Phase 7 — Leakage-safe point-prediction baselines
+
+Phase 7은 Phase 6의 동결 feature·target·split·fold 전처리 통계를 사용해 Linear/Logistic,
+Random Forest, Gradient Boosting 베이스라인을 학습합니다. quality와 runtime은 회귀로,
+failure는 확률 분류로 다루며 instance holdout과 family holdout 모두에서 OOF 예측을 만듭니다.
+failure 학습 fold가 단일 클래스이면 실패를 숨기거나 임의 양성 표본을 만들지 않고
+training prevalence 상수 모델로 명시적으로 대체합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase7 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN
+```
+
+각 split/fold/target/model 학습 단위는 예측·metric·직렬화 모델과 SHA-256 완료 marker를
+남깁니다. 중단된 실행은 같은 입력과 설정일 때만 안전하게 재개할 수 있습니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase7 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --resume-from artifacts/probabilistic/PHASE7_RUN
+```
+
+`PHASE_7_PASS`는 누수 방지, OOF coverage, 유한·유효 범위 예측, 모델 artifact 및 hash
+무결성에 대한 게이트입니다. 베이스라인의 예측 성능 자체는 Phase 7 PASS/FAIL 기준으로
+사용하지 않으며 16개 Phase 완료 전 최종 성능 판정을 내리지 않습니다. 분포 예측,
+survival runtime, hierarchical Bayesian 및 Mixture-of-Experts는 Phase 7 범위에 포함하지
+않고 이후 Phase에서 다룹니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.

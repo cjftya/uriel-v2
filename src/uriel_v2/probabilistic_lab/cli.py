@@ -10,6 +10,7 @@ from uriel_v2.probabilistic_lab.phase3 import run_phase3, validate_phase3_datase
 from uriel_v2.probabilistic_lab.phase4 import run_phase4
 from uriel_v2.probabilistic_lab.phase5 import run_phase5
 from uriel_v2.probabilistic_lab.phase6 import run_phase6
+from uriel_v2.probabilistic_lab.phase7 import run_phase7
 from uriel_v2.probabilistic_lab.pilot import run_pilot
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
@@ -75,6 +76,15 @@ def build_parser() -> argparse.ArgumentParser:
     phase6.add_argument("--output", default="artifacts/probabilistic", help="Phase 6 결과 상위 디렉터리")
     phase6.add_argument("--resume-from", default=None, help="중단된 Phase 6 실행 디렉터리")
     phase6.add_argument("--verbose", action="store_true")
+
+    phase7 = commands.add_parser("phase7", help="leakage-safe LR/RF/GBM point-prediction baselines")
+    phase7.add_argument("--phase6", required=True, help="통과한 Phase 6 feature 디렉터리")
+    phase7.add_argument("--output", default="artifacts/probabilistic", help="Phase 7 결과 상위 디렉터리")
+    phase7.add_argument("--resume-from", default=None, help="중단된 Phase 7 실행 디렉터리")
+    phase7.add_argument("--master-seed", type=int, default=20_260_823)
+    phase7.add_argument("--rf-estimators", type=int, default=48)
+    phase7.add_argument("--gb-iterations", type=int, default=100)
+    phase7.add_argument("--verbose", action="store_true")
 
     validate = commands.add_parser("validate", help="생성된 Parquet 데이터셋 품질 검사")
     validate.add_argument("run_directory")
@@ -164,6 +174,20 @@ def main(argv: list[str] | None = None) -> int:
             logger=logger,
         )
         return 0 if summary["status"] == "PHASE_6_PASS" else 1
+    if args.command == "phase7":
+        run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
+            args.output, "probabilistic-phase7"
+        )
+        logger = setup_logging(run_directory, args.verbose)
+        summary = run_phase7(
+            run_directory,
+            args.phase6,
+            master_seed=args.master_seed,
+            random_forest_estimators=args.rf_estimators,
+            gradient_boosting_iterations=args.gb_iterations,
+            logger=logger,
+        )
+        return 0 if summary["status"] == "PHASE_7_PASS" else 1
     if args.command == "phase2":
         run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
             args.output, "probabilistic-phase2"
