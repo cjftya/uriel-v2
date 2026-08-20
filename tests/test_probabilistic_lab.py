@@ -21,6 +21,11 @@ from uriel_v2.probabilistic_lab.phase9 import (
     _type_metrics,
     run_phase9,
 )
+from uriel_v2.probabilistic_lab.phase10 import (
+    _fit_survival_distribution,
+    _survival_metrics,
+    run_phase10,
+)
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -106,6 +111,45 @@ def test_phase9_fits_binary_and_multiclass_failure_models() -> None:
     )
     assert metrics["type_metric_status"] == "available:fitted"
     assert np.isfinite(metrics["type_log_loss"])
+
+
+def test_phase10_fits_monotone_censoring_aware_survival() -> None:
+    generator = np.random.default_rng(20260826)
+    x_train = generator.normal(size=(140, 6))
+    x_validation = generator.normal(size=(28, 6))
+    budget_train = np.full(140, 100.0)
+    event_train = np.zeros(140, dtype=bool)
+    event_train[::3] = True
+    duration_train = np.full(140, 100.0)
+    event_steps = np.asarray([1, 2, 5, 10, 20, 50, 100], dtype=float)
+    duration_train[event_train] = np.resize(event_steps, int(event_train.sum()))
+
+    _, reach, _, _ = _fit_survival_distribution(
+        x_train,
+        x_validation,
+        event_train,
+        duration_train,
+        budget_train,
+        job_id="unit__fold0__runtime_survival",
+        master_seed=20260826,
+        gradient_boosting_iterations=5,
+        beta_prior=(0.5, 0.5),
+    )
+
+    assert np.isfinite(reach).all()
+    assert np.logical_and(reach >= 0.0, reach <= 1.0).all()
+    assert (np.diff(reach, axis=1) >= 0.0).all()
+    event_validation = np.asarray([True, False] * 14, dtype=bool)
+    duration_validation = np.where(event_validation, np.resize(event_steps, 28), 100.0)
+    metrics = _survival_metrics(
+        event_validation,
+        duration_validation,
+        np.full(28, 100.0),
+        reach,
+    )
+    assert np.isfinite(metrics["survival_nll"])
+    assert np.isfinite(metrics["integrated_brier"])
+    assert metrics["c_index_comparable_pair_count"] > 0
 
 
 def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
@@ -285,6 +329,7 @@ def test_cli_exposes_phase2_without_changing_phase1() -> None:
         "phase7",
         "phase8",
         "phase9",
+        "phase10",
         "validate",
     } <= set(action.choices)
 
@@ -544,6 +589,71 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     )
     assert resumed_phase9["status"] == "PHASE_9_PASS"
     assert (phase9_directory / "manifest.json").read_bytes() == phase9_manifest_before
+
+    phase10_directory = tmp_path / "phase10"
+    phase10 = run_phase10(
+        phase10_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        gradient_boosting_iterations=5,
+    )
+    assert phase10["status"] == "PHASE_10_PASS"
+    assert phase10["job_count"] == 6
+    assert phase10["prediction_row_count"] == 1_440
+    assert phase10["model_artifact_count"] == 6
+    assert phase10["quantile_count"] == 7
+    assert phase10["survival_horizon_count"] == 7
+    assert phase10["observed_event_count"] + phase10["censored_count"] == 720
+    runtime_survival = pd.read_parquet(
+        phase10_directory / "data/predictions/oof_runtime_survival.parquet"
+    )
+    runtime_columns = [
+        "runtime_q05",
+        "runtime_q10",
+        "runtime_q25",
+        "runtime_q50",
+        "runtime_q75",
+        "runtime_q90",
+        "runtime_q95",
+    ]
+    reach_columns = [
+        "reach_by_p001",
+        "reach_by_p002",
+        "reach_by_p005",
+        "reach_by_p010",
+        "reach_by_p020",
+        "reach_by_p050",
+        "reach_by_p100",
+    ]
+    assert not runtime_survival.duplicated(["feature_id", "split_name"]).any()
+    assert (runtime_survival[runtime_columns].to_numpy(dtype=float) > 0.0).all()
+    assert (np.diff(runtime_survival[runtime_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
+    assert (np.diff(runtime_survival[reach_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
+
+    phase10_manifest_before = (phase10_directory / "manifest.json").read_bytes()
+    resumed_phase10 = run_phase10(
+        phase10_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        gradient_boosting_iterations=5,
+    )
+    assert resumed_phase10["status"] == "PHASE_10_PASS"
+    assert (phase10_directory / "manifest.json").read_bytes() == phase10_manifest_before
+
+    (phase10_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 10 resume manifest hash mismatch"):
+        run_phase10(
+            phase10_directory,
+            phase6_directory,
+            phase7_directory,
+            phase8_directory,
+            phase9_directory,
+            gradient_boosting_iterations=5,
+        )
 
     (phase9_directory / "manifest.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="completed Phase 9 resume manifest hash mismatch"):

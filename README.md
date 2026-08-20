@@ -244,6 +244,40 @@ python -m uriel_v2.probabilistic_lab phase9 \
 숨기지 않고 별도 estimability 상태로 보존하며, 최종 종합 평가는 Phase 16에서 수행합니다.
 Runtime과 censoring-aware survival 모델링은 Phase 10 범위입니다.
 
+### Phase 10 — Runtime distribution and first-passage survival
+
+Phase 10은 Phase 6 feature와 Phase 7~9 PASS 산출물을 동결 입력으로 사용해 runtime의
+조건부 분포와 목표 품질까지의 first-passage survival을 학습합니다. Runtime은 로그 공간의
+5%·10%·25%·50%·75%·90%·95% quantile gradient boosting으로 모델링합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase10 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN
+```
+
+First-passage event는 목표 품질에 처음 도달한 step이며, 미도달 실행은 실제 실행 step과
+budget 중 작은 값에서 right-censor 처리합니다. 1%·2%·5%·10%·20%·50%·100% budget
+horizon별 누적 도달 확률을 학습한 뒤 단조 누적 보정을 적용합니다. 출력에는 runtime NLL,
+CRPS, quantile coverage·calibration과 survival NLL, C-index, integrated Brier, horizon별
+calibration, 도달 확률, restricted mean step, PAR10이 포함됩니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase10 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --resume-from artifacts/probabilistic/PHASE10_RUN
+```
+
+`PHASE_10_PASS`는 동결 입력, problem split 무누수, runtime quantile과 survival curve의
+유효성, censoring 계약, metric·artifact hash 무결성만 검사합니다. 성능 수준은 Phase 10
+PASS 기준으로 사용하지 않으며 최종 평가는 Phase 16에서 수행합니다. Hierarchical Bayesian
+partial pooling은 Phase 11 범위입니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.
