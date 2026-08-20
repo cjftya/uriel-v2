@@ -133,6 +133,30 @@ python -m uriel_v2.probabilistic_lab phase5 \
 
 Phase 5가 `PHASE_5_PASS`가 아니면 이후 feature engineering과 모델링을 시작하지 않습니다.
 
+### Phase 6 — Leakage-safe feature engineering
+
+Phase 6은 통과한 Phase 4·5 산출물을 읽기 전용 입력으로 사용해 5%·10%·20% 초기 궤적의
+학습 준비 feature와 분리된 target을 생성합니다. Seed/RNG 식별자와 최종 target은 feature에서
+제외하고, instance/family holdout fold마다 training 문제만으로 전처리 통계를 계산합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase6 \
+  --phase4 artifacts/probabilistic/PHASE4_RUN \
+  --phase5 artifacts/probabilistic/PHASE5_RUN
+```
+
+각 단계는 `run_state.json`과 SHA-256으로 체크포인트되며, 중단된 디렉터리는 다음처럼 안전하게
+재개합니다. 입력·설정·완료 산출물 해시가 다르면 덮어쓰지 않고 즉시 중단합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase6 \
+  --phase4 artifacts/probabilistic/PHASE4_RUN \
+  --phase5 artifacts/probabilistic/PHASE5_RUN \
+  --resume-from artifacts/probabilistic/PHASE6_RUN
+```
+
+`PHASE_6_PASS` 전에는 Phase 7 모델링을 시작하지 않습니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.

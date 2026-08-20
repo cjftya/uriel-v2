@@ -13,6 +13,7 @@ from uriel_v2.probabilistic_lab.pilot import build_pilot_jobs, run_pilot
 from uriel_v2.probabilistic_lab.phase3 import run_phase3, validate_phase3_dataset
 from uriel_v2.probabilistic_lab.phase4 import run_phase4
 from uriel_v2.probabilistic_lab.phase5 import run_phase5
+from uriel_v2.probabilistic_lab.phase6 import run_phase6
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -223,7 +224,7 @@ def test_phase2_pipeline_writes_paired_comparisons(tmp_path) -> None:
 def test_cli_exposes_phase2_without_changing_phase1() -> None:
     parser = build_parser()
     action = next(item for item in parser._actions if getattr(item, "dest", None) == "command")
-    assert {"pilot", "phase2", "phase3", "phase4", "phase5", "validate"} <= set(action.choices)
+    assert {"pilot", "phase2", "phase3", "phase4", "phase5", "phase6", "validate"} <= set(action.choices)
 
 
 def test_phase3_synthetic_benchmark_is_balanced_and_reproducible() -> None:
@@ -372,3 +373,29 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     assert phase5["critical_issue_count"] == 0
     assert phase5["reproducibility_check_count"] == 20
     assert phase5["reproducibility_mismatch_count"] == 0
+
+    phase6_directory = tmp_path / "phase6"
+    phase6 = run_phase6(phase6_directory, phase4_directory, phase5_directory)
+    assert phase6["status"] == "PHASE_6_PASS"
+    assert phase6["feature_row_count"] == 720
+    assert phase6["target_row_count"] == 720
+    assert phase6["preprocessing_fold_count"] == 6
+    features = pd.read_parquet(phase6_directory / "data/features/model_features.parquet")
+    targets = pd.read_parquet(phase6_directory / "data/targets/model_targets.parquet")
+    assert features["feature_id"].is_unique
+    assert not any("seed" in column.lower() for column in features.columns)
+    assert not set(features.columns) & {
+        "target_quality_final",
+        "target_runtime",
+        "target_failure",
+    }
+    assert set(features["feature_id"]) == set(targets["feature_id"])
+
+    manifest_before = (phase6_directory / "manifest.json").read_bytes()
+    resumed = run_phase6(phase6_directory, phase4_directory, phase5_directory)
+    assert resumed["status"] == "PHASE_6_PASS"
+    assert (phase6_directory / "manifest.json").read_bytes() == manifest_before
+
+    (phase6_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 6 resume manifest hash mismatch"):
+        run_phase6(phase6_directory, phase4_directory, phase5_directory)

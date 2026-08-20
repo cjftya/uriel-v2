@@ -9,6 +9,7 @@ from uriel_v2.probabilistic_lab.phase2 import run_phase2
 from uriel_v2.probabilistic_lab.phase3 import run_phase3, validate_phase3_dataset
 from uriel_v2.probabilistic_lab.phase4 import run_phase4
 from uriel_v2.probabilistic_lab.phase5 import run_phase5
+from uriel_v2.probabilistic_lab.phase6 import run_phase6
 from uriel_v2.probabilistic_lab.pilot import run_pilot
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
@@ -67,6 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     phase5.add_argument("--output", default="artifacts/probabilistic", help="감사 결과 상위 디렉터리")
     phase5.add_argument("--reproducibility-samples", type=int, default=1)
     phase5.add_argument("--verbose", action="store_true")
+
+    phase6 = commands.add_parser("phase6", help="leakage-safe feature engineering and fold preprocessing")
+    phase6.add_argument("--phase4", required=True, help="동결된 Phase 4 실행 디렉터리")
+    phase6.add_argument("--phase5", required=True, help="통과한 Phase 5 감사 디렉터리")
+    phase6.add_argument("--output", default="artifacts/probabilistic", help="Phase 6 결과 상위 디렉터리")
+    phase6.add_argument("--resume-from", default=None, help="중단된 Phase 6 실행 디렉터리")
+    phase6.add_argument("--verbose", action="store_true")
 
     validate = commands.add_parser("validate", help="생성된 Parquet 데이터셋 품질 검사")
     validate.add_argument("run_directory")
@@ -144,6 +152,18 @@ def main(argv: list[str] | None = None) -> int:
             run_directory,
         )
         return 0 if summary["status"] == "PHASE_5_PASS" else 1
+    if args.command == "phase6":
+        run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
+            args.output, "probabilistic-phase6"
+        )
+        logger = setup_logging(run_directory, args.verbose)
+        summary = run_phase6(
+            run_directory,
+            args.phase4,
+            args.phase5,
+            logger=logger,
+        )
+        return 0 if summary["status"] == "PHASE_6_PASS" else 1
     if args.command == "phase2":
         run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
             args.output, "probabilistic-phase2"
