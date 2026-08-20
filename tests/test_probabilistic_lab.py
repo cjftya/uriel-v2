@@ -36,6 +36,11 @@ from uriel_v2.probabilistic_lab.phase13 import (
     _recalibration_levels,
     run_phase13,
 )
+from uriel_v2.probabilistic_lab.phase14 import (
+    _fit_runtime_scales,
+    _rank_candidates,
+    run_phase14,
+)
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -259,6 +264,44 @@ def test_phase13_copula_is_positive_semidefinite_with_failure_fallback() -> None
     assert diagnostics["failure_dependence_status"] == "unavailable_no_failure_events"
 
 
+def test_phase14_runtime_scales_use_positive_training_domain_medians() -> None:
+    training = pd.DataFrame(
+        {
+            "domain": ["sampling", "sampling", "optimization", "optimization"],
+            "observed_runtime": [1.0, 3.0, 4.0, 8.0],
+        }
+    )
+    scales, support = _fit_runtime_scales(training, minimum_runtime_scale=1e-6)
+
+    assert scales == {"optimization": 6.0, "sampling": 2.0}
+    assert (support["runtime_scale_seconds"] > 0.0).all()
+    assert set(support["support_type"]) == {
+        "runtime_scale_global",
+        "runtime_scale_domain",
+    }
+
+
+def test_phase14_candidate_ties_are_ranked_by_algorithm_name() -> None:
+    candidates = pd.DataFrame(
+        {
+            "split_name": ["instance_holdout", "instance_holdout"],
+            "fold": [0, 0],
+            "problem_id": ["problem", "problem"],
+            "cutoff": [0.05, 0.05],
+            "utility_profile": ["balanced", "balanced"],
+            "algorithm": ["z_algorithm", "a_algorithm"],
+            "expected_utility": [0.5, 0.5],
+            "realized_utility": [0.4, 0.4],
+        }
+    )
+    ranked = _rank_candidates(candidates)
+
+    winner = ranked.loc[ranked["predicted_rank"] == 1].iloc[0]
+    oracle = ranked.loc[ranked["realized_rank"] == 1].iloc[0]
+    assert winner["algorithm"] == "a_algorithm"
+    assert oracle["algorithm"] == "a_algorithm"
+
+
 def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
     first = build_pilot_problems(3, 20260819)
     second = build_pilot_problems(3, 20260819)
@@ -440,6 +483,7 @@ def test_cli_exposes_phase2_without_changing_phase1() -> None:
         "phase11",
         "phase12",
         "phase13",
+        "phase14",
         "validate",
     } <= set(action.choices)
 
@@ -909,6 +953,73 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     )
     assert resumed_phase13["status"] == "PHASE_13_PASS"
     assert (phase13_directory / "manifest.json").read_bytes() == phase13_manifest_before
+
+    phase14_directory = tmp_path / "phase14"
+    phase14 = run_phase14(
+        phase14_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        phase11_directory,
+        phase12_directory,
+        phase13_directory,
+    )
+    assert phase14["status"] == "PHASE_14_PASS"
+    assert phase14["job_count"] == 6
+    assert phase14["candidate_row_count"] == 2_880
+    assert phase14["selection_row_count"] == 1_440
+    assert phase14["fold_metric_row_count"] == 24
+    assert phase14["aggregate_metric_row_count"] == 96
+    assert phase14["utility_profile_count"] == 4
+    assert phase14["primary_utility_profile"] == "balanced"
+    assert phase14["checks"]["decision_training_is_cross_fitted"] is True
+    assert phase14["checks"]["runtime_units_not_mixed_with_budget"] is True
+    assert phase14["checks"]["rank_permutations_and_flags_valid"] is True
+    candidates = pd.read_parquet(
+        phase14_directory / "data/decisions/oof_algorithm_candidates.parquet"
+    )
+    selections = pd.read_parquet(
+        phase14_directory / "data/decisions/oof_algorithm_selections.parquet"
+    )
+    assert not candidates.duplicated(
+        ["split_name", "problem_id", "cutoff", "utility_profile", "algorithm"]
+    ).any()
+    assert (candidates.groupby(
+        ["split_name", "problem_id", "cutoff", "utility_profile"]
+    )["selected_by_policy"].sum() == 1).all()
+    assert (selections["oracle_regret"] >= 0.0).all()
+    assert selections["selection_entropy"].between(0.0, 1.0).all()
+
+    phase14_manifest_before = (phase14_directory / "manifest.json").read_bytes()
+    resumed_phase14 = run_phase14(
+        phase14_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        phase11_directory,
+        phase12_directory,
+        phase13_directory,
+    )
+    assert resumed_phase14["status"] == "PHASE_14_PASS"
+    assert (phase14_directory / "manifest.json").read_bytes() == phase14_manifest_before
+
+    (phase14_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 14 resume manifest hash mismatch"):
+        run_phase14(
+            phase14_directory,
+            phase6_directory,
+            phase7_directory,
+            phase8_directory,
+            phase9_directory,
+            phase10_directory,
+            phase11_directory,
+            phase12_directory,
+            phase13_directory,
+        )
 
     (phase13_directory / "manifest.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="completed Phase 13 resume manifest hash mismatch"):

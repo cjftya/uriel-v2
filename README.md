@@ -391,6 +391,50 @@ copula 상관행렬의 양의 준정부호, OOF coverage와 artifact hash 무결
 개선 자체는 기록하되 PASS 기준으로 사용하지 않으며, utility와 알고리즘 선택은 Phase 14
 범위입니다.
 
+### Phase 14 — Expected utility and algorithm selection
+
+Phase 14는 Phase 13의 OOF 결합분포를 동결 입력으로 사용해 quality, wall-clock runtime,
+failure risk, quality uncertainty, joint SLA 확률을 효용으로 변환합니다. `quality_first`,
+`balanced`, `speed_sensitive`, `risk_averse` 네 정책을 사전등록하고 `balanced`를 기본 정책으로
+둡니다. 효용 가중치는 Phase 14에서 학습하지 않으며 성능을 보고 변경하지 않습니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase14 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN \
+  --phase11 artifacts/probabilistic/PHASE11_RUN \
+  --phase12 artifacts/probabilistic/PHASE12_RUN \
+  --phase13 artifacts/probabilistic/PHASE13_RUN
+```
+
+Runtime 비용은 evaluation budget과 섞지 않습니다. 각 fold의 validation을 제외한 OOF
+training row에서 domain별 wall-clock runtime 중앙값을 구하고, 동일한 wall-clock 단위끼리만
+나눠 정규화합니다. 선택 단위는 `problem_id × cutoff × algorithm`이며 paired seed 반복을 먼저
+평균낸 뒤 예상 효용으로 순위를 정합니다. 동률은 algorithm 이름 오름차순으로 결정해 재현성을
+보장합니다. 결과에는 선택 정확도, oracle regret, Top-2 coverage, training-global-best와 random
+baseline 대비 효용 차이, 선택 margin과 entropy가 포함됩니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase14 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN \
+  --phase11 artifacts/probabilistic/PHASE11_RUN \
+  --phase12 artifacts/probabilistic/PHASE12_RUN \
+  --phase13 artifacts/probabilistic/PHASE13_RUN \
+  --resume-from artifacts/probabilistic/PHASE14_RUN
+```
+
+`PHASE_14_PASS`는 이전 Phase hash chain, fold 밖 학습, runtime 단위 안전성, seed 평균 선택,
+결정적 rank·oracle regret, OOF coverage, checkpoint와 artifact 무결성을 검사합니다. 선택 성능
+자체는 기록만 하며 최종 성능 판정은 Phase 16으로 미룹니다. Phase 15는 선택 강건성, utility
+sensitivity와 held-out 일반화 검증 범위입니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.

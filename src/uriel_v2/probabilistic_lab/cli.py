@@ -17,6 +17,7 @@ from uriel_v2.probabilistic_lab.phase10 import run_phase10
 from uriel_v2.probabilistic_lab.phase11 import run_phase11
 from uriel_v2.probabilistic_lab.phase12 import run_phase12
 from uriel_v2.probabilistic_lab.phase13 import run_phase13
+from uriel_v2.probabilistic_lab.phase14 import run_phase14
 from uriel_v2.probabilistic_lab.pilot import run_pilot
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
@@ -164,6 +165,23 @@ def build_parser() -> argparse.ArgumentParser:
     phase13.add_argument("--minimum-class-rows", type=int, default=20)
     phase13.add_argument("--copula-shrinkage", type=float, default=200.0)
     phase13.add_argument("--verbose", action="store_true")
+
+    phase14 = commands.add_parser("phase14", help="cross-fitted expected-utility selection")
+    phase14.add_argument("--phase6", required=True, help="통과한 Phase 6 feature 디렉터리")
+    phase14.add_argument("--phase7", required=True, help="통과한 Phase 7 baseline 디렉터리")
+    phase14.add_argument("--phase8", required=True, help="통과한 Phase 8 quality distribution 디렉터리")
+    phase14.add_argument("--phase9", required=True, help="통과한 Phase 9 failure distribution 디렉터리")
+    phase14.add_argument("--phase10", required=True, help="통과한 Phase 10 runtime-survival 디렉터리")
+    phase14.add_argument("--phase11", required=True, help="통과한 Phase 11 hierarchical 디렉터리")
+    phase14.add_argument("--phase12", required=True, help="통과한 Phase 12 mixture 디렉터리")
+    phase14.add_argument("--phase13", required=True, help="통과한 Phase 13 joint calibration 디렉터리")
+    phase14.add_argument("--output", default="artifacts/probabilistic", help="Phase 14 결과 상위 디렉터리")
+    phase14.add_argument("--resume-from", default=None, help="중단된 Phase 14 실행 디렉터리")
+    phase14.add_argument("--master-seed", type=int, default=20_260_829)
+    phase14.add_argument("--runtime-ratio-cap", type=float, default=10.0)
+    phase14.add_argument("--minimum-runtime-scale", type=float, default=1e-6)
+    phase14.add_argument("--softmax-temperature", type=float, default=0.10)
+    phase14.add_argument("--verbose", action="store_true")
 
     validate = commands.add_parser("validate", help="생성된 Parquet 데이터셋 품질 검사")
     validate.add_argument("run_directory")
@@ -370,6 +388,28 @@ def main(argv: list[str] | None = None) -> int:
             logger=logger,
         )
         return 0 if summary["status"] == "PHASE_13_PASS" else 1
+    if args.command == "phase14":
+        run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
+            args.output, "probabilistic-phase14"
+        )
+        logger = setup_logging(run_directory, args.verbose)
+        summary = run_phase14(
+            run_directory,
+            args.phase6,
+            args.phase7,
+            args.phase8,
+            args.phase9,
+            args.phase10,
+            args.phase11,
+            args.phase12,
+            args.phase13,
+            master_seed=args.master_seed,
+            runtime_ratio_cap=args.runtime_ratio_cap,
+            minimum_runtime_scale=args.minimum_runtime_scale,
+            softmax_temperature=args.softmax_temperature,
+            logger=logger,
+        )
+        return 0 if summary["status"] == "PHASE_14_PASS" else 1
     if args.command == "phase2":
         run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
             args.output, "probabilistic-phase2"
