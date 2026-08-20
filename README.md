@@ -351,6 +351,46 @@ python -m uriel_v2.probabilistic_lab phase12 \
 metric·artifact hash 무결성을 검사합니다. 예측 성능 차이는 기록하되 PASS 기준으로 사용하지
 않으며, 결합 확률 모델과 calibration은 Phase 13 범위입니다.
 
+### Phase 13 — Joint probability model and calibration
+
+Phase 13은 Phase 12 OOF 분포를 동결 입력으로 사용해 quality·runtime quantile과
+failure·first-passage 확률을 fold별 train-only 방식으로 재보정합니다. Quality와 runtime은
+training PIT의 경험분포로 quantile level을 조정하고, 이진 확률은 logistic calibration을
+적용합니다. 한 class가 없거나 표본이 부족하면 Beta-Binomial fallback을 명시합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase13 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN \
+  --phase11 artifacts/probabilistic/PHASE11_RUN \
+  --phase12 artifacts/probabilistic/PHASE12_RUN
+```
+
+재보정된 quality·runtime marginal은 Gaussian copula로 결합합니다. Failure 관측이 충분하면
+randomized binary PIT로 의존성을 추정하고, 현재처럼 관측 실패가 없으면 quality–runtime
+copula와 독립 failure fallback을 사용합니다. 출력에는 joint NLL, 독립 가정 대비 copula gain,
+quality 75%·90% 이상이면서 budget 내 완료하고 실패하지 않을 결합 확률과 Brier가 포함됩니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase13 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN \
+  --phase11 artifacts/probabilistic/PHASE11_RUN \
+  --phase12 artifacts/probabilistic/PHASE12_RUN \
+  --resume-from artifacts/probabilistic/PHASE13_RUN
+```
+
+`PHASE_13_PASS`는 calibration·copula 학습의 cross-fitting, marginal과 결합 확률의 유효성,
+copula 상관행렬의 양의 준정부호, OOF coverage와 artifact hash 무결성을 검사합니다. 성능
+개선 자체는 기록하되 PASS 기준으로 사용하지 않으며, utility와 알고리즘 선택은 Phase 14
+범위입니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.

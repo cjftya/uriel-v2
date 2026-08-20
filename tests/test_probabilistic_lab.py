@@ -31,6 +31,11 @@ from uriel_v2.probabilistic_lab.phase11 import (
     run_phase11,
 )
 from uriel_v2.probabilistic_lab.phase12 import _fit_gate, run_phase12
+from uriel_v2.probabilistic_lab.phase13 import (
+    _estimate_copula,
+    _recalibration_levels,
+    run_phase13,
+)
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -214,6 +219,46 @@ def test_phase12_gate_is_bounded_and_uses_cross_fitted_loss_labels() -> None:
     assert np.logical_and(weight >= 0.02, weight <= 0.98).all()
 
 
+def test_phase13_recalibration_levels_are_monotone_and_regularized() -> None:
+    pit = np.linspace(0.15, 0.95, 300)
+    levels, diagnostics = _recalibration_levels(
+        pit,
+        calibration_strength=50.0,
+        lower_bound=0.0,
+        upper_bound=1.0,
+    )
+
+    assert np.isfinite(levels).all()
+    assert np.logical_and(levels >= 0.0, levels <= 1.0).all()
+    assert (np.diff(levels) >= 0.0).all()
+    assert diagnostics["training_row_count"] == len(pit)
+    assert diagnostics["maximum_level_shift"] > 0.0
+
+
+def test_phase13_copula_is_positive_semidefinite_with_failure_fallback() -> None:
+    generator = np.random.default_rng(20260828)
+    quality_pit = np.clip(generator.uniform(size=240), 1e-6, 1.0 - 1e-6)
+    runtime_pit = np.clip(0.75 * quality_pit + 0.25 * generator.uniform(size=240), 1e-6, 1.0 - 1e-6)
+    correlation, diagnostics = _estimate_copula(
+        quality_pit,
+        runtime_pit,
+        np.full(240, 0.01),
+        np.zeros(240, dtype=bool),
+        pd.Series([f"feature-{index}" for index in range(240)]),
+        shrinkage=50.0,
+        minimum_class_rows=10,
+        seed=20260828,
+    )
+
+    assert np.allclose(correlation, correlation.T)
+    assert np.allclose(np.diag(correlation), 1.0)
+    assert np.linalg.eigvalsh(correlation).min() >= 0.0
+    assert correlation[0, 1] > 0.0
+    assert correlation[0, 2] == pytest.approx(0.0)
+    assert correlation[1, 2] == pytest.approx(0.0)
+    assert diagnostics["failure_dependence_status"] == "unavailable_no_failure_events"
+
+
 def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
     first = build_pilot_problems(3, 20260819)
     second = build_pilot_problems(3, 20260819)
@@ -394,6 +439,7 @@ def test_cli_exposes_phase2_without_changing_phase1() -> None:
         "phase10",
         "phase11",
         "phase12",
+        "phase13",
         "validate",
     } <= set(action.choices)
 
@@ -807,6 +853,78 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     )
     assert resumed_phase12["status"] == "PHASE_12_PASS"
     assert (phase12_directory / "manifest.json").read_bytes() == phase12_manifest_before
+
+    phase13_directory = tmp_path / "phase13"
+    phase13 = run_phase13(
+        phase13_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        phase11_directory,
+        phase12_directory,
+        calibration_strength=20.0,
+        minimum_class_rows=5,
+        copula_shrinkage=20.0,
+    )
+    assert phase13["status"] == "PHASE_13_PASS"
+    assert phase13["job_count"] == 6
+    assert phase13["prediction_row_count"] == 1_440
+    assert phase13["model_artifact_count"] == 6
+    assert phase13["calibration_support_row_count"] == 150
+    assert phase13["failure_dependence_estimability"] == "UNAVAILABLE_NO_OBSERVED_FAILURES"
+    assert phase13["checks"]["calibration_training_is_cross_fitted"] is True
+    assert phase13["checks"]["copula_correlation_matrices_valid"] is True
+    assert phase13["checks"]["joint_probabilities_nested"] is True
+    joint = pd.read_parquet(
+        phase13_directory / "data/predictions/oof_joint_calibrated_predictions.parquet"
+    )
+    joint_quality_columns = [f"quality_{column.removeprefix('quality_')}" for column in quality_hierarchical_columns]
+    joint_runtime_columns = runtime_columns
+    joint_reach_columns = reach_columns
+    assert not joint.duplicated(["feature_id", "split_name"]).any()
+    assert (np.diff(joint[joint_quality_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
+    assert (np.diff(joint[joint_runtime_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
+    assert (np.diff(joint[joint_reach_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
+    assert joint["joint_nll"].map(np.isfinite).all()
+    assert (
+        joint["joint_quality_ge_q090_runtime_within_budget_no_failure_probability"]
+        <= joint["joint_quality_ge_q075_runtime_within_budget_no_failure_probability"]
+    ).all()
+
+    phase13_manifest_before = (phase13_directory / "manifest.json").read_bytes()
+    resumed_phase13 = run_phase13(
+        phase13_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        phase11_directory,
+        phase12_directory,
+        calibration_strength=20.0,
+        minimum_class_rows=5,
+        copula_shrinkage=20.0,
+    )
+    assert resumed_phase13["status"] == "PHASE_13_PASS"
+    assert (phase13_directory / "manifest.json").read_bytes() == phase13_manifest_before
+
+    (phase13_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 13 resume manifest hash mismatch"):
+        run_phase13(
+            phase13_directory,
+            phase6_directory,
+            phase7_directory,
+            phase8_directory,
+            phase9_directory,
+            phase10_directory,
+            phase11_directory,
+            phase12_directory,
+            calibration_strength=20.0,
+            minimum_class_rows=5,
+            copula_shrinkage=20.0,
+        )
 
     (phase12_directory / "manifest.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="completed Phase 12 resume manifest hash mismatch"):
