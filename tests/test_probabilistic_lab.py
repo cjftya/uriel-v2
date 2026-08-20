@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, replace
 
 import numpy as np
@@ -47,6 +48,7 @@ from uriel_v2.probabilistic_lab.phase15 import (
     _scenario_selection_rows,
     run_phase15,
 )
+from uriel_v2.probabilistic_lab.phase16 import _decide_verdict, run_phase16
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -380,6 +382,36 @@ def test_phase15_sensitivity_ties_use_algorithm_name() -> None:
     assert selection["oracle_algorithm"] == "a_algorithm"
 
 
+def test_phase16_deployment_requires_every_criterion_to_pass() -> None:
+    criteria = pd.DataFrame(
+        {
+            "criterion_id": [
+                "point_prediction_skill",
+                "marginal_distribution_calibration",
+                "survival_prediction",
+                "joint_probability_generalization",
+                "failure_risk_estimability",
+                "domain_expert_coverage",
+                "selection_value_vs_random",
+                "selection_value_vs_training_global_best",
+                "selection_regret_vs_baselines",
+                "selection_policy_robustness",
+            ],
+            "status": ["PASS"] * 10,
+        }
+    )
+    success = _decide_verdict(criteria)
+    assert success["verdict"] == "DEPLOYABLE_SUCCESS"
+    assert success["deployment_ready"] is True
+
+    criteria.loc[
+        criteria["criterion_id"] == "selection_value_vs_random", "status"
+    ] = "FAIL"
+    partial = _decide_verdict(criteria)
+    assert partial["verdict"] == "PARTIAL_SUCCESS_RESEARCH_ONLY"
+    assert partial["deployment_ready"] is False
+
+
 def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
     first = build_pilot_problems(3, 20260819)
     second = build_pilot_problems(3, 20260819)
@@ -563,6 +595,7 @@ def test_cli_exposes_phase2_without_changing_phase1() -> None:
         "phase13",
         "phase14",
         "phase15",
+        "phase16",
         "validate",
     } <= set(action.choices)
 
@@ -1118,6 +1151,66 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     )
     assert resumed_phase15["status"] == "PHASE_15_PASS"
     assert (phase15_directory / "manifest.json").read_bytes() == phase15_manifest_before
+
+    phase16_directory = tmp_path / "phase16"
+    phase16 = run_phase16(
+        phase16_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        phase11_directory,
+        phase12_directory,
+        phase13_directory,
+        phase14_directory,
+        phase15_directory,
+    )
+    assert phase16["status"] == "PHASE_16_PASS"
+    assert phase16["project_complete"] is True
+    assert phase16["final_decision"]["verdict"] == "PARTIAL_SUCCESS_RESEARCH_ONLY"
+    assert phase16["final_decision"]["deployment_ready"] is False
+    assert phase16["criterion_count"] == 10
+    assert phase16["metric_row_count"] == 31
+    assert phase16["checks"]["verdict_recomputed_exact"] is True
+    assert "failure_risk_estimability" in phase16["failed_deployment_criteria"]
+    final_assessment = json.loads(
+        (phase16_directory / "final_assessment.json").read_text(encoding="utf-8")
+    )
+    assert final_assessment["final_decision"] == phase16["final_decision"]
+
+    phase16_manifest_before = (phase16_directory / "manifest.json").read_bytes()
+    resumed_phase16 = run_phase16(
+        phase16_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        phase11_directory,
+        phase12_directory,
+        phase13_directory,
+        phase14_directory,
+        phase15_directory,
+    )
+    assert resumed_phase16["status"] == "PHASE_16_PASS"
+    assert (phase16_directory / "manifest.json").read_bytes() == phase16_manifest_before
+
+    (phase16_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 16 resume manifest hash mismatch"):
+        run_phase16(
+            phase16_directory,
+            phase6_directory,
+            phase7_directory,
+            phase8_directory,
+            phase9_directory,
+            phase10_directory,
+            phase11_directory,
+            phase12_directory,
+            phase13_directory,
+            phase14_directory,
+            phase15_directory,
+        )
 
     (phase15_directory / "manifest.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="completed Phase 15 resume manifest hash mismatch"):

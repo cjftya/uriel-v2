@@ -462,6 +462,37 @@ python -m uriel_v2.probabilistic_lab phase15 \
 tie-break, 두 held-out split coverage, bootstrap 구간과 artifact 무결성만 검사합니다.
 성능 수치 자체는 PASS 기준으로 사용하지 않으며 최종 종합 판정은 Phase 16에서 수행합니다.
 
+### Phase 16 — Final viability assessment
+
+Phase 16은 처음으로 held-out 성능을 최종 판정 gate에 사용합니다. Phase 7~15에서 동결된
+수치만 읽으며 현재 holdout 결과에 맞춰 threshold, 효용 가중치, 모델 또는 split을 변경하지
+않습니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase16 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN \
+  --phase11 artifacts/probabilistic/PHASE11_RUN \
+  --phase12 artifacts/probabilistic/PHASE12_RUN \
+  --phase13 artifacts/probabilistic/PHASE13_RUN \
+  --phase14 artifacts/probabilistic/PHASE14_RUN \
+  --phase15 artifacts/probabilistic/PHASE15_RUN
+```
+
+최종 판정은 point prediction skill, marginal calibration, survival, joint probability,
+failure estimability, expert domain coverage, random·training-global-best 대비 선택 효용,
+oracle regret, utility·split 강건성의 10개 기준으로 구성됩니다. 모든 기준이 통과해야
+`DEPLOYABLE_SUCCESS`가 됩니다. 일부 예측 모델만 유효하면
+`PARTIAL_SUCCESS_RESEARCH_ONLY`, 제한적 근거만 남으면 `INCONCLUSIVE_LIMITED_SIGNAL`,
+실용 신호가 없으면 `NO_PRACTICAL_SIGNAL`로 판정합니다.
+
+`PHASE_16_PASS`는 최종 평가가 무결하게 완료됐다는 뜻이며 모델 성공과는 다릅니다. 실제 모델
+결론은 `final_assessment.json`의 `final_decision`으로 확인합니다. Phase 16 이후 현재 holdout은
+다시 튜닝에 사용하지 않고, blocker가 해결된 뒤 새로운 외부 benchmark로만 재검증합니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.
