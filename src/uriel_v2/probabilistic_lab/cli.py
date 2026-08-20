@@ -18,6 +18,7 @@ from uriel_v2.probabilistic_lab.phase11 import run_phase11
 from uriel_v2.probabilistic_lab.phase12 import run_phase12
 from uriel_v2.probabilistic_lab.phase13 import run_phase13
 from uriel_v2.probabilistic_lab.phase14 import run_phase14
+from uriel_v2.probabilistic_lab.phase15 import run_phase15
 from uriel_v2.probabilistic_lab.pilot import run_pilot
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
@@ -182,6 +183,18 @@ def build_parser() -> argparse.ArgumentParser:
     phase14.add_argument("--minimum-runtime-scale", type=float, default=1e-6)
     phase14.add_argument("--softmax-temperature", type=float, default=0.10)
     phase14.add_argument("--verbose", action="store_true")
+
+    phase15 = commands.add_parser(
+        "phase15", help="frozen-policy robustness and held-out generalization"
+    )
+    phase15.add_argument("--phase14", required=True, help="통과한 Phase 14 선택 디렉터리")
+    phase15.add_argument("--output", default="artifacts/probabilistic", help="Phase 15 결과 상위 디렉터리")
+    phase15.add_argument("--resume-from", default=None, help="중단된 Phase 15 실행 디렉터리")
+    phase15.add_argument("--master-seed", type=int, default=20_260_830)
+    phase15.add_argument("--perturbation-fraction", type=float, default=0.25)
+    phase15.add_argument("--bootstrap-iterations", type=int, default=2_000)
+    phase15.add_argument("--confidence-level", type=float, default=0.95)
+    phase15.add_argument("--verbose", action="store_true")
 
     validate = commands.add_parser("validate", help="생성된 Parquet 데이터셋 품질 검사")
     validate.add_argument("run_directory")
@@ -410,6 +423,21 @@ def main(argv: list[str] | None = None) -> int:
             logger=logger,
         )
         return 0 if summary["status"] == "PHASE_14_PASS" else 1
+    if args.command == "phase15":
+        run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
+            args.output, "probabilistic-phase15"
+        )
+        logger = setup_logging(run_directory, args.verbose)
+        summary = run_phase15(
+            run_directory,
+            args.phase14,
+            master_seed=args.master_seed,
+            perturbation_fraction=args.perturbation_fraction,
+            bootstrap_iterations=args.bootstrap_iterations,
+            confidence_level=args.confidence_level,
+            logger=logger,
+        )
+        return 0 if summary["status"] == "PHASE_15_PASS" else 1
     if args.command == "phase2":
         run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
             args.output, "probabilistic-phase2"

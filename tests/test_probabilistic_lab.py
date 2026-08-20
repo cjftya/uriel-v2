@@ -41,6 +41,12 @@ from uriel_v2.probabilistic_lab.phase14 import (
     _rank_candidates,
     run_phase14,
 )
+from uriel_v2.probabilistic_lab.phase15 import (
+    _bootstrap_metric_summary,
+    _build_sensitivity_scenarios,
+    _scenario_selection_rows,
+    run_phase15,
+)
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -302,6 +308,78 @@ def test_phase14_candidate_ties_are_ranked_by_algorithm_name() -> None:
     assert oracle["algorithm"] == "a_algorithm"
 
 
+def test_phase15_sensitivity_scenarios_are_symmetric_and_preregistered() -> None:
+    scenarios = _build_sensitivity_scenarios(0.25)
+
+    assert len(scenarios) == 44
+    assert len({scenario["scenario_id"] for scenario in scenarios}) == len(scenarios)
+    assert sum(bool(scenario["is_nominal"]) for scenario in scenarios) == 4
+    balanced_runtime = [
+        scenario
+        for scenario in scenarios
+        if scenario["base_profile"] == "balanced"
+        and scenario["perturbed_component"] == "runtime_weight"
+    ]
+    assert sorted(scenario["multiplier"] for scenario in balanced_runtime) == [0.75, 1.25]
+
+
+def test_phase15_cluster_bootstrap_is_deterministic_and_finite() -> None:
+    frame = pd.DataFrame(
+        {
+            "problem_id": ["a", "a", "b", "b", "c", "c"],
+            "selection_correct": [True, False, True, True, False, False],
+            "oracle_regret": [0.1, 0.2, 0.0, 0.1, 0.3, 0.2],
+            "selected_vs_training_global_best_utility_gain": [0.1, 0.0, 0.2, 0.1, -0.1, 0.0],
+            "selected_vs_random_utility_gain": [0.2, 0.1, 0.3, 0.2, -0.1, 0.0],
+            "selection_entropy": [0.5, 0.6, 0.3, 0.4, 0.8, 0.7],
+        }
+    )
+    first = _bootstrap_metric_summary(
+        frame, iterations=100, confidence_level=0.95, seed=20260830
+    )
+    second = _bootstrap_metric_summary(
+        frame, iterations=100, confidence_level=0.95, seed=20260830
+    )
+
+    assert first == second
+    assert np.isfinite(list(first.values())).all()
+    assert first["mean_oracle_regret_ci_lower"] <= first["mean_oracle_regret_ci_upper"]
+
+
+def test_phase15_sensitivity_ties_use_algorithm_name() -> None:
+    candidates = pd.DataFrame(
+        {
+            "split_name": ["instance_holdout", "instance_holdout"],
+            "fold": [0, 0],
+            "problem_id": ["problem", "problem"],
+            "problem_family": ["family", "family"],
+            "domain": ["sampling", "sampling"],
+            "cutoff": [0.05, 0.05],
+            "utility_profile": ["balanced", "balanced"],
+            "algorithm": ["z_algorithm", "a_algorithm"],
+            "training_global_best": [False, True],
+            "predicted_quality": [0.5, 0.5],
+            "predicted_runtime_ratio": [1.0, 1.0],
+            "predicted_failure_probability": [0.0, 0.0],
+            "predicted_quality_uncertainty": [0.1, 0.1],
+            "predicted_sla_probability": [0.5, 0.5],
+            "realized_quality": [0.5, 0.5],
+            "realized_runtime_ratio": [1.0, 1.0],
+            "realized_failure": [0.0, 0.0],
+            "realized_sla": [0.0, 0.0],
+        }
+    )
+    scenario = next(
+        item
+        for item in _build_sensitivity_scenarios(0.25)
+        if item["scenario_id"] == "balanced__nominal"
+    )
+
+    selection = _scenario_selection_rows(candidates, scenario).iloc[0]
+    assert selection["selected_algorithm"] == "a_algorithm"
+    assert selection["oracle_algorithm"] == "a_algorithm"
+
+
 def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
     first = build_pilot_problems(3, 20260819)
     second = build_pilot_problems(3, 20260819)
@@ -484,6 +562,7 @@ def test_cli_exposes_phase2_without_changing_phase1() -> None:
         "phase12",
         "phase13",
         "phase14",
+        "phase15",
         "validate",
     } <= set(action.choices)
 
@@ -1006,6 +1085,47 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     )
     assert resumed_phase14["status"] == "PHASE_14_PASS"
     assert (phase14_directory / "manifest.json").read_bytes() == phase14_manifest_before
+
+    phase15_directory = tmp_path / "phase15"
+    phase15 = run_phase15(
+        phase15_directory,
+        phase14_directory,
+        bootstrap_iterations=100,
+    )
+    assert phase15["status"] == "PHASE_15_PASS"
+    assert phase15["scenario_count"] == 44
+    assert phase15["sensitivity_selection_row_count"] == 15_840
+    assert phase15["sensitivity_metric_row_count"] == 88
+    assert phase15["perturbation_stability_row_count"] == 1_440
+    assert phase15["profile_stability_row_count"] == 360
+    assert phase15["cross_split_agreement_row_count"] == 720
+    assert phase15["heldout_metric_row_count"] == 8
+    assert phase15["checks"]["phase14_nominal_selection_reproduced"] is True
+    assert phase15["checks"]["performance_not_used_as_gate"] is True
+    sensitivity = pd.read_parquet(
+        phase15_directory / "data/robustness/utility_sensitivity_selections.parquet"
+    )
+    assert not sensitivity.duplicated(
+        ["split_name", "problem_id", "cutoff", "base_profile", "scenario_id"]
+    ).any()
+    assert sensitivity["oracle_regret"].ge(0.0).all()
+
+    phase15_manifest_before = (phase15_directory / "manifest.json").read_bytes()
+    resumed_phase15 = run_phase15(
+        phase15_directory,
+        phase14_directory,
+        bootstrap_iterations=100,
+    )
+    assert resumed_phase15["status"] == "PHASE_15_PASS"
+    assert (phase15_directory / "manifest.json").read_bytes() == phase15_manifest_before
+
+    (phase15_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 15 resume manifest hash mismatch"):
+        run_phase15(
+            phase15_directory,
+            phase14_directory,
+            bootstrap_iterations=100,
+        )
 
     (phase14_directory / "manifest.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="completed Phase 14 resume manifest hash mismatch"):

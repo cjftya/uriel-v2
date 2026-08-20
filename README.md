@@ -435,6 +435,33 @@ python -m uriel_v2.probabilistic_lab phase14 \
 자체는 기록만 하며 최종 성능 판정은 Phase 16으로 미룹니다. Phase 15는 선택 강건성, utility
 sensitivity와 held-out 일반화 검증 범위입니다.
 
+### Phase 15 — Selection robustness and held-out generalization
+
+Phase 15는 Phase 14의 OOF 후보·정책·효용 profile을 동결한 채 선택이 작은 정책 변화에도
+유지되는지 검사합니다. 각 profile의 다섯 효용 성분을 한 번에 하나씩 ±25% 교란하며,
+결과를 보고 교란 범위나 가중치를 바꾸지 않습니다. 명목 시나리오는 Phase 14 선택을 정확히
+재현해야 합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase15 \
+  --phase14 artifacts/probabilistic/PHASE14_RUN
+```
+
+결과에는 교란별 선택 유지율과 최악 oracle regret, 네 효용 profile 간 선택 일치도,
+`instance_holdout`과 `family_holdout` 간 선택 일치도, 문제 단위 cluster bootstrap 95% 구간이
+포함됩니다. bootstrap은 정책을 다시 학습하지 않고 불확실성만 측정합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase15 \
+  --phase14 artifacts/probabilistic/PHASE14_RUN \
+  --bootstrap-iterations 2000 \
+  --resume-from artifacts/probabilistic/PHASE15_RUN
+```
+
+`PHASE_15_PASS`는 Phase 14 hash chain, 명목 선택 재현, 사전 고정 교란 coverage, 결정적
+tie-break, 두 held-out split coverage, bootstrap 구간과 artifact 무결성만 검사합니다.
+성능 수치 자체는 PASS 기준으로 사용하지 않으며 최종 종합 판정은 Phase 16에서 수행합니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.
