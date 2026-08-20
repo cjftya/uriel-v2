@@ -30,6 +30,7 @@ from uriel_v2.probabilistic_lab.phase11 import (
     _fit_continuous_hierarchy,
     run_phase11,
 )
+from uriel_v2.probabilistic_lab.phase12 import _fit_gate, run_phase12
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -186,6 +187,31 @@ def test_phase11_continuous_hierarchy_shrinks_and_handles_unseen_groups() -> Non
     assert support["shrinkage_weight"].between(0.0, 1.0).all()
     assert support["shrinkage_weight"].between(0.0, 1.0, inclusive="neither").any()
     assert diagnostics["unseen_domain_problem_family_count"] == 1
+
+
+def test_phase12_gate_is_bounded_and_uses_cross_fitted_loss_labels() -> None:
+    generator = np.random.default_rng(20260827)
+    x_train = generator.normal(size=(160, 8))
+    x_validation = generator.normal(size=(32, 8))
+    base_loss = np.square(x_train[:, 0] - 0.25)
+    hierarchical_loss = np.square(x_train[:, 0] + 0.25)
+
+    estimator, weight, diagnostics = _fit_gate(
+        x_train,
+        x_validation,
+        base_loss,
+        hierarchical_loss,
+        seed=20260827,
+        gate_iterations=5,
+        weight_clip=(0.02, 0.98),
+        beta_prior=(0.5, 0.5),
+    )
+
+    assert estimator is not None
+    assert diagnostics["fit_status"] == "fitted"
+    assert diagnostics["training_row_count"] == len(x_train)
+    assert np.isfinite(weight).all()
+    assert np.logical_and(weight >= 0.02, weight <= 0.98).all()
 
 
 def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
@@ -367,6 +393,7 @@ def test_cli_exposes_phase2_without_changing_phase1() -> None:
         "phase9",
         "phase10",
         "phase11",
+        "phase12",
         "validate",
     } <= set(action.choices)
 
@@ -720,6 +747,80 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     )
     assert resumed_phase11["status"] == "PHASE_11_PASS"
     assert (phase11_directory / "manifest.json").read_bytes() == phase11_manifest_before
+
+    phase12_directory = tmp_path / "phase12"
+    phase12 = run_phase12(
+        phase12_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        phase11_directory,
+        gate_iterations=5,
+        minimum_gate_rows=20,
+    )
+    assert phase12["status"] == "PHASE_12_PASS"
+    assert phase12["job_count"] == 6
+    assert phase12["prediction_row_count"] == 1_440
+    assert phase12["model_artifact_count"] == 6
+    assert phase12["gate_support_row_count"] == 144
+    assert phase12["expert_slot_count"] == 6
+    assert phase12["checks"]["meta_gate_training_is_cross_fitted"] is True
+    assert phase12["checks"]["unexecuted_experts_explicit"] is True
+    assert phase12["checks"]["mixture_identity_exact"] is True
+    assert phase12["unavailable_expert_slots"] == [
+        "matrix",
+        "natural_process",
+        "stream",
+    ]
+    mixture = pd.read_parquet(
+        phase12_directory / "data/predictions/oof_mixture_predictions.parquet"
+    )
+    mixture_quality_columns = [f"moe_{column}" for column in quality_hierarchical_columns]
+    mixture_runtime_columns = [f"moe_{column}" for column in runtime_columns]
+    mixture_reach_columns = [f"moe_{column}" for column in reach_columns]
+    assert not mixture.duplicated(["feature_id", "split_name"]).any()
+    assert (
+        np.diff(mixture[mixture_quality_columns].to_numpy(dtype=float), axis=1) >= 0.0
+    ).all()
+    assert (
+        np.diff(mixture[mixture_runtime_columns].to_numpy(dtype=float), axis=1) >= 0.0
+    ).all()
+    assert (
+        np.diff(mixture[mixture_reach_columns].to_numpy(dtype=float), axis=1) >= 0.0
+    ).all()
+    for target in ("quality", "runtime", "failure", "survival"):
+        assert mixture[f"{target}_hierarchical_weight"].between(0.0, 1.0).all()
+
+    phase12_manifest_before = (phase12_directory / "manifest.json").read_bytes()
+    resumed_phase12 = run_phase12(
+        phase12_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        phase11_directory,
+        gate_iterations=5,
+        minimum_gate_rows=20,
+    )
+    assert resumed_phase12["status"] == "PHASE_12_PASS"
+    assert (phase12_directory / "manifest.json").read_bytes() == phase12_manifest_before
+
+    (phase12_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 12 resume manifest hash mismatch"):
+        run_phase12(
+            phase12_directory,
+            phase6_directory,
+            phase7_directory,
+            phase8_directory,
+            phase9_directory,
+            phase10_directory,
+            phase11_directory,
+            gate_iterations=5,
+            minimum_gate_rows=20,
+        )
 
     (phase11_directory / "manifest.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="completed Phase 11 resume manifest hash mismatch"):

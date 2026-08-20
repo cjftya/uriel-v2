@@ -314,6 +314,43 @@ python -m uriel_v2.probabilistic_lab phase11 \
 사후분포·수축 가중치 유효성 및 hash 무결성만 검사합니다. 기존 모델 대비 성능 차이는
 기록하지만 PASS 기준으로 사용하지 않으며, Mixture-of-Experts routing은 Phase 12 범위입니다.
 
+### Phase 12 — Cross-fitted Mixture-of-Experts routing
+
+Phase 12는 Phase 8~10의 비계층 확률 예측과 Phase 11의 계층 예측을 동결한 뒤,
+quality·runtime·failure·survival마다 어느 쪽을 얼마나 사용할지 OOF 손실로 학습합니다.
+Sampling, Optimization, Matrix, Stream, natural-process, universal fallback의 6개 전문가 슬롯을
+고정하며, 현재 실행 데이터가 없는 슬롯은 임의로 채우지 않고 unavailable로 명시합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase12 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN \
+  --phase11 artifacts/probabilistic/PHASE11_RUN
+```
+
+각 검증 fold의 게이트는 현재 fold를 제외한 다른 fold의 OOF 예측 손실만 사용합니다.
+Domain specialist에 충분한 학습 표본이 없거나 실행 도메인이 없으면 universal gate로
+fallback하고, 최종 예측은 비계층·계층 예측을 0~1 soft weight로 혼합합니다. 게이트 지원량,
+선택 정확도, entropy, oracle regret와 원본 전문가 대비 NLL·CRPS·Brier 차이를 함께 기록합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase12 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN \
+  --phase11 artifacts/probabilistic/PHASE11_RUN \
+  --resume-from artifacts/probabilistic/PHASE12_RUN
+```
+
+`PHASE_12_PASS`는 cross-fitting, 6개 슬롯·fallback, OOF coverage, 혼합식, 예측 유효성,
+metric·artifact hash 무결성을 검사합니다. 예측 성능 차이는 기록하되 PASS 기준으로 사용하지
+않으며, 결합 확률 모델과 calibration은 Phase 13 범위입니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.
