@@ -278,6 +278,42 @@ python -m uriel_v2.probabilistic_lab phase10 \
 PASS 기준으로 사용하지 않으며 최종 평가는 Phase 16에서 수행합니다. Hierarchical Bayesian
 partial pooling은 Phase 11 범위입니다.
 
+### Phase 11 — Hierarchical Bayesian partial pooling
+
+Phase 11은 Phase 6 feature와 Phase 7~10 PASS 산출물을 동결 입력으로 사용해 domain,
+problem family, algorithm family의 계층 구조를 확률 예측에 반영합니다. Quality와
+log-runtime은 Ridge 고정효과의 training-fold 잔차에 정규-정규 사후 효과를 순차 적용하고,
+failure와 horizon별 목표 도달 확률은 Beta-Binomial 사후분포로 부분 풀링합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase11 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN
+```
+
+표본이 충분한 seen group은 자체 사후평균을 더 많이 사용하고, 표본이 적거나 family
+holdout에서 처음 등장한 group은 domain-algorithm, domain, global 사후분포 순으로
+수축·fallback합니다. 각 group의 표본 수, prior/posterior, 수축 가중치는
+`data/posteriors/group_posteriors.parquet`에 저장합니다. Phase 8~10 OOF 예측도 동일 행에서
+reference로 고정해 NLL, CRPS, Brier, calibration, C-index, PAR10 차이를 기록합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase11 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --phase9 artifacts/probabilistic/PHASE9_RUN \
+  --phase10 artifacts/probabilistic/PHASE10_RUN \
+  --resume-from artifacts/probabilistic/PHASE11_RUN
+```
+
+`PHASE_11_PASS`는 training-fold 전용 posterior, OOF coverage, unseen-family fallback,
+사후분포·수축 가중치 유효성 및 hash 무결성만 검사합니다. 기존 모델 대비 성능 차이는
+기록하지만 PASS 기준으로 사용하지 않으며, Mixture-of-Experts routing은 Phase 12 범위입니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.

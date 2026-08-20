@@ -14,6 +14,7 @@ from uriel_v2.probabilistic_lab.phase7 import run_phase7
 from uriel_v2.probabilistic_lab.phase8 import run_phase8
 from uriel_v2.probabilistic_lab.phase9 import run_phase9
 from uriel_v2.probabilistic_lab.phase10 import run_phase10
+from uriel_v2.probabilistic_lab.phase11 import run_phase11
 from uriel_v2.probabilistic_lab.pilot import run_pilot
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
@@ -119,6 +120,18 @@ def build_parser() -> argparse.ArgumentParser:
     phase10.add_argument("--master-seed", type=int, default=20_260_826)
     phase10.add_argument("--gb-iterations", type=int, default=60)
     phase10.add_argument("--verbose", action="store_true")
+
+    phase11 = commands.add_parser("phase11", help="hierarchical Bayesian partial pooling")
+    phase11.add_argument("--phase6", required=True, help="통과한 Phase 6 feature 디렉터리")
+    phase11.add_argument("--phase7", required=True, help="통과한 Phase 7 baseline 디렉터리")
+    phase11.add_argument("--phase8", required=True, help="통과한 Phase 8 quality distribution 디렉터리")
+    phase11.add_argument("--phase9", required=True, help="통과한 Phase 9 failure distribution 디렉터리")
+    phase11.add_argument("--phase10", required=True, help="통과한 Phase 10 runtime-survival 디렉터리")
+    phase11.add_argument("--output", default="artifacts/probabilistic", help="Phase 11 결과 상위 디렉터리")
+    phase11.add_argument("--resume-from", default=None, help="중단된 Phase 11 실행 디렉터리")
+    phase11.add_argument("--ridge-alpha", type=float, default=10.0)
+    phase11.add_argument("--prior-strength", type=float, default=20.0)
+    phase11.add_argument("--verbose", action="store_true")
 
     validate = commands.add_parser("validate", help="생성된 Parquet 데이터셋 품질 검사")
     validate.add_argument("run_directory")
@@ -268,6 +281,23 @@ def main(argv: list[str] | None = None) -> int:
             logger=logger,
         )
         return 0 if summary["status"] == "PHASE_10_PASS" else 1
+    if args.command == "phase11":
+        run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
+            args.output, "probabilistic-phase11"
+        )
+        logger = setup_logging(run_directory, args.verbose)
+        summary = run_phase11(
+            run_directory,
+            args.phase6,
+            args.phase7,
+            args.phase8,
+            args.phase9,
+            args.phase10,
+            ridge_alpha=args.ridge_alpha,
+            prior_strength=args.prior_strength,
+            logger=logger,
+        )
+        return 0 if summary["status"] == "PHASE_11_PASS" else 1
     if args.command == "phase2":
         run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
             args.output, "probabilistic-phase2"

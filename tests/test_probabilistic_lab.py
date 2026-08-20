@@ -26,6 +26,10 @@ from uriel_v2.probabilistic_lab.phase10 import (
     _survival_metrics,
     run_phase10,
 )
+from uriel_v2.probabilistic_lab.phase11 import (
+    _fit_continuous_hierarchy,
+    run_phase11,
+)
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -150,6 +154,38 @@ def test_phase10_fits_monotone_censoring_aware_survival() -> None:
     assert np.isfinite(metrics["survival_nll"])
     assert np.isfinite(metrics["integrated_brier"])
     assert metrics["c_index_comparable_pair_count"] > 0
+
+
+def test_phase11_continuous_hierarchy_shrinks_and_handles_unseen_groups() -> None:
+    training_groups = pd.DataFrame(
+        {
+            "domain": ["sampling"] * 8,
+            "problem_family": ["a"] * 4 + ["b"] * 4,
+            "algorithm_family": ["iid"] * 2 + ["rqmc"] * 2 + ["iid"] * 2 + ["rqmc"] * 2,
+        }
+    )
+    validation_groups = pd.DataFrame(
+        {
+            "domain": ["sampling", "sampling"],
+            "problem_family": ["a", "unseen"],
+            "algorithm_family": ["iid", "iid"],
+        }
+    )
+    observed = np.asarray([-2.2, -1.8, -1.2, -0.8, 0.8, 1.2, 1.8, 2.2])
+    mean, std, _model, support, diagnostics = _fit_continuous_hierarchy(
+        observed,
+        np.zeros(len(observed)),
+        np.zeros(len(validation_groups)),
+        training_groups,
+        validation_groups,
+        target="unit",
+    )
+
+    assert np.isfinite(mean).all()
+    assert (std > 0.0).all()
+    assert support["shrinkage_weight"].between(0.0, 1.0).all()
+    assert support["shrinkage_weight"].between(0.0, 1.0, inclusive="neither").any()
+    assert diagnostics["unseen_domain_problem_family_count"] == 1
 
 
 def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
@@ -330,6 +366,7 @@ def test_cli_exposes_phase2_without_changing_phase1() -> None:
         "phase8",
         "phase9",
         "phase10",
+        "phase11",
         "validate",
     } <= set(action.choices)
 
@@ -631,6 +668,71 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     assert (runtime_survival[runtime_columns].to_numpy(dtype=float) > 0.0).all()
     assert (np.diff(runtime_survival[runtime_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
     assert (np.diff(runtime_survival[reach_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
+
+    phase11_directory = tmp_path / "phase11"
+    phase11 = run_phase11(
+        phase11_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        ridge_alpha=5.0,
+        prior_strength=10.0,
+    )
+    assert phase11["status"] == "PHASE_11_PASS"
+    assert phase11["job_count"] == 6
+    assert phase11["prediction_row_count"] == 1_440
+    assert phase11["model_artifact_count"] == 6
+    assert phase11["posterior_row_count"] > 0
+    assert phase11["checks"]["family_holdout_uses_unseen_family_fallback"] is True
+    hierarchical = pd.read_parquet(
+        phase11_directory / "data/predictions/oof_hierarchical_predictions.parquet"
+    )
+    quality_hierarchical_columns = [
+        "quality_q05",
+        "quality_q10",
+        "quality_q25",
+        "quality_q50",
+        "quality_q75",
+        "quality_q90",
+        "quality_q95",
+    ]
+    assert not hierarchical.duplicated(["feature_id", "split_name"]).any()
+    assert (
+        np.diff(
+            hierarchical[quality_hierarchical_columns].to_numpy(dtype=float), axis=1
+        )
+        >= 0.0
+    ).all()
+    assert hierarchical["failure_probability"].between(0.0, 1.0).all()
+
+    phase11_manifest_before = (phase11_directory / "manifest.json").read_bytes()
+    resumed_phase11 = run_phase11(
+        phase11_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        phase9_directory,
+        phase10_directory,
+        ridge_alpha=5.0,
+        prior_strength=10.0,
+    )
+    assert resumed_phase11["status"] == "PHASE_11_PASS"
+    assert (phase11_directory / "manifest.json").read_bytes() == phase11_manifest_before
+
+    (phase11_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 11 resume manifest hash mismatch"):
+        run_phase11(
+            phase11_directory,
+            phase6_directory,
+            phase7_directory,
+            phase8_directory,
+            phase9_directory,
+            phase10_directory,
+            ridge_alpha=5.0,
+            prior_strength=10.0,
+        )
 
     phase10_manifest_before = (phase10_directory / "manifest.json").read_bytes()
     resumed_phase10 = run_phase10(
