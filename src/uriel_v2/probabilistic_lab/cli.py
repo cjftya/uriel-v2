@@ -12,6 +12,7 @@ from uriel_v2.probabilistic_lab.phase5 import run_phase5
 from uriel_v2.probabilistic_lab.phase6 import run_phase6
 from uriel_v2.probabilistic_lab.phase7 import run_phase7
 from uriel_v2.probabilistic_lab.phase8 import run_phase8
+from uriel_v2.probabilistic_lab.phase9 import run_phase9
 from uriel_v2.probabilistic_lab.pilot import run_pilot
 from uriel_v2.probabilistic_lab.validation import validate_dataset
 
@@ -95,6 +96,17 @@ def build_parser() -> argparse.ArgumentParser:
     phase8.add_argument("--master-seed", type=int, default=20_260_824)
     phase8.add_argument("--gb-iterations", type=int, default=80)
     phase8.add_argument("--verbose", action="store_true")
+
+    phase9 = commands.add_parser("phase9", help="failure probability and failure-type modelling")
+    phase9.add_argument("--phase6", required=True, help="통과한 Phase 6 feature 디렉터리")
+    phase9.add_argument("--phase7", required=True, help="통과한 Phase 7 baseline 디렉터리")
+    phase9.add_argument("--phase8", required=True, help="통과한 Phase 8 distribution 디렉터리")
+    phase9.add_argument("--output", default="artifacts/probabilistic", help="Phase 9 결과 상위 디렉터리")
+    phase9.add_argument("--resume-from", default=None, help="중단된 Phase 9 실행 디렉터리")
+    phase9.add_argument("--master-seed", type=int, default=20_260_825)
+    phase9.add_argument("--gb-iterations", type=int, default=80)
+    phase9.add_argument("--calibration-bins", type=int, default=10)
+    phase9.add_argument("--verbose", action="store_true")
 
     validate = commands.add_parser("validate", help="생성된 Parquet 데이터셋 품질 검사")
     validate.add_argument("run_directory")
@@ -212,6 +224,22 @@ def main(argv: list[str] | None = None) -> int:
             logger=logger,
         )
         return 0 if summary["status"] == "PHASE_8_PASS" else 1
+    if args.command == "phase9":
+        run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
+            args.output, "probabilistic-phase9"
+        )
+        logger = setup_logging(run_directory, args.verbose)
+        summary = run_phase9(
+            run_directory,
+            args.phase6,
+            args.phase7,
+            args.phase8,
+            master_seed=args.master_seed,
+            gradient_boosting_iterations=args.gb_iterations,
+            calibration_bins=args.calibration_bins,
+            logger=logger,
+        )
+        return 0 if summary["status"] == "PHASE_9_PASS" else 1
     if args.command == "phase2":
         run_directory = Path(args.resume_from) if args.resume_from else create_run_directory(
             args.output, "probabilistic-phase2"

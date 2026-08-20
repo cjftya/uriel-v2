@@ -16,6 +16,11 @@ from uriel_v2.probabilistic_lab.phase5 import run_phase5
 from uriel_v2.probabilistic_lab.phase6 import run_phase6
 from uriel_v2.probabilistic_lab.phase7 import run_phase7
 from uriel_v2.probabilistic_lab.phase8 import run_phase8
+from uriel_v2.probabilistic_lab.phase9 import (
+    _fit_failure_models,
+    _type_metrics,
+    run_phase9,
+)
 from uriel_v2.probabilistic_lab.problems import (
     build_pilot_problems,
     evaluate_objective,
@@ -57,6 +62,50 @@ def _scientific_result(bundle):
 def test_budget_checkpoints_are_monotone_and_end_at_budget() -> None:
     budget = BudgetSpec(budget_type="evaluations", total=17)
     assert checkpoint_steps(budget) == (1, 2, 4, 9, 17)
+
+
+def test_phase9_fits_binary_and_multiclass_failure_models() -> None:
+    generator = np.random.default_rng(20260825)
+    x_train = generator.normal(size=(120, 6))
+    x_validation = generator.normal(size=(24, 6))
+    y_failure_train = np.zeros(120, dtype=bool)
+    y_failure_train[::4] = True
+    y_type_train = np.full(120, None, dtype=object)
+    positive_indices = np.flatnonzero(y_failure_train)
+    y_type_train[positive_indices[::2]] = "FAIL_NUMERIC"
+    y_type_train[positive_indices[1::2]] = "FAIL_TIMEOUT"
+
+    _, failure_probability, conditional, binary_status, type_status = _fit_failure_models(
+        x_train,
+        x_validation,
+        y_failure_train,
+        y_type_train,
+        ["FAIL_NUMERIC", "FAIL_TIMEOUT"],
+        job_id="unit__fold0__failure_distribution",
+        master_seed=20260825,
+        gradient_boosting_iterations=5,
+        beta_prior=(0.5, 0.5),
+    )
+
+    assert binary_status == "fitted"
+    assert type_status == "fitted"
+    assert np.isfinite(failure_probability).all()
+    assert np.logical_and(failure_probability >= 0.0, failure_probability <= 1.0).all()
+    assert np.allclose(conditional.sum(axis=1), 1.0)
+    observed_failure = np.asarray([True, True, False] * 8, dtype=bool)
+    observed_type = np.asarray(
+        ["FAIL_NUMERIC", "FAIL_TIMEOUT", None] * 8,
+        dtype=object,
+    )
+    metrics = _type_metrics(
+        observed_failure,
+        observed_type,
+        conditional,
+        ["FAIL_NUMERIC", "FAIL_TIMEOUT"],
+        model_status=type_status,
+    )
+    assert metrics["type_metric_status"] == "available:fitted"
+    assert np.isfinite(metrics["type_log_loss"])
 
 
 def test_problem_generation_is_reproducible_and_ids_are_unique() -> None:
@@ -226,7 +275,18 @@ def test_phase2_pipeline_writes_paired_comparisons(tmp_path) -> None:
 def test_cli_exposes_phase2_without_changing_phase1() -> None:
     parser = build_parser()
     action = next(item for item in parser._actions if getattr(item, "dest", None) == "command")
-    assert {"pilot", "phase2", "phase3", "phase4", "phase5", "phase6", "phase7", "phase8", "validate"} <= set(action.choices)
+    assert {
+        "pilot",
+        "phase2",
+        "phase3",
+        "phase4",
+        "phase5",
+        "phase6",
+        "phase7",
+        "phase8",
+        "phase9",
+        "validate",
+    } <= set(action.choices)
 
 
 def test_phase3_synthetic_benchmark_is_balanced_and_reproducible() -> None:
@@ -442,6 +502,59 @@ def test_phase4_and_phase5_pipeline_pass_quality_gate(tmp_path) -> None:
     assert np.isfinite(distribution[quantile_columns].to_numpy(dtype=float)).all()
     assert (np.diff(distribution[quantile_columns].to_numpy(dtype=float), axis=1) >= 0.0).all()
     assert distribution["pit"].between(0.0, 1.0).all()
+
+    phase9_directory = tmp_path / "phase9"
+    phase9 = run_phase9(
+        phase9_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        gradient_boosting_iterations=8,
+        calibration_bins=5,
+    )
+    assert phase9["status"] == "PHASE_9_PASS"
+    assert phase9["job_count"] == 6
+    assert phase9["prediction_row_count"] == 1_440
+    assert phase9["model_artifact_count"] == 6
+    assert phase9["observed_failure_count"] == 0
+    assert phase9["estimability_status"] == "NO_OBSERVED_FAILURES"
+    assert phase9["binary_fit_status_counts"] == {"beta_binomial_fallback": 6}
+    assert phase9["type_fit_status_counts"] == {
+        "unavailable_no_observed_failure_types": 6
+    }
+    failure_probability = pd.read_parquet(
+        phase9_directory / "data/predictions/oof_failure_probability.parquet"
+    )
+    failure_types = pd.read_parquet(
+        phase9_directory / "data/predictions/oof_failure_type_probability.parquet"
+    )
+    assert not failure_probability.duplicated(["feature_id", "split_name"]).any()
+    assert failure_probability["failure_probability"].between(0.0, 1.0).all()
+    assert (failure_probability["failure_probability"] > 0.0).all()
+    assert failure_types.empty
+
+    phase9_manifest_before = (phase9_directory / "manifest.json").read_bytes()
+    resumed_phase9 = run_phase9(
+        phase9_directory,
+        phase6_directory,
+        phase7_directory,
+        phase8_directory,
+        gradient_boosting_iterations=8,
+        calibration_bins=5,
+    )
+    assert resumed_phase9["status"] == "PHASE_9_PASS"
+    assert (phase9_directory / "manifest.json").read_bytes() == phase9_manifest_before
+
+    (phase9_directory / "manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="completed Phase 9 resume manifest hash mismatch"):
+        run_phase9(
+            phase9_directory,
+            phase6_directory,
+            phase7_directory,
+            phase8_directory,
+            gradient_boosting_iterations=8,
+            calibration_bins=5,
+        )
 
     phase8_manifest_before = (phase8_directory / "manifest.json").read_bytes()
     resumed_phase8 = run_phase8(

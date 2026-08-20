@@ -213,6 +213,37 @@ python -m uriel_v2.probabilistic_lab phase8 \
 분포 metric 유한성 및 hash 무결성만 검사합니다. metric의 성능 수준은 PASS/FAIL에 사용하지
 않고 16개 Phase 완료 후 판단합니다. Failure 확률과 failure type 모델링은 Phase 9 범위입니다.
 
+### Phase 9 — Failure probability and failure types
+
+Phase 9는 Phase 6 feature와 Phase 7·8 PASS 산출물을 동결 입력으로 사용해 이진 실패 확률
+`P(Failure|X)`와 조건부 실패 유형 분포 `P(FailureType|Failure,X)`를 학습합니다. split과
+전처리는 이전 Phase의 problem 단위 계약을 그대로 재사용합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase9 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN
+```
+
+실패 학습 fold가 단일 클래스이면 실패 사례를 합성하거나 주입하지 않습니다. 대신 Jeffreys
+prior 기반 beta-binomial 상수 확률을 기록하고, 관측 실패가 전혀 없으면 실패 유형 모델을
+`NO_OBSERVED_FAILURES`로 명시합니다. Brier, log loss, ECE, AUROC, AUPRC와 조건부 유형
+log loss·Brier·Top-1·macro F1은 정의 가능한 경우에만 계산합니다.
+
+```bash
+python -m uriel_v2.probabilistic_lab phase9 \
+  --phase6 artifacts/probabilistic/PHASE6_RUN \
+  --phase7 artifacts/probabilistic/PHASE7_RUN \
+  --phase8 artifacts/probabilistic/PHASE8_RUN \
+  --resume-from artifacts/probabilistic/PHASE9_RUN
+```
+
+`PHASE_9_PASS`는 성능 판정이 아니라 입력 동결, 무누수 OOF coverage, 확률·class support,
+단일 클래스 처리와 산출물 hash 무결성에 대한 게이트입니다. 실패 데이터가 없다는 사실은
+숨기지 않고 별도 estimability 상태로 보존하며, 최종 종합 평가는 Phase 16에서 수행합니다.
+Runtime과 censoring-aware survival 모델링은 Phase 10 범위입니다.
+
 ## 설치
 
 Python 3.11 이상을 권장합니다.
